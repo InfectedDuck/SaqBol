@@ -35,6 +35,7 @@
       "ru": 48
     },
     "n_hard_negative": 17,
+    "n_double_annotated": 0,
     "n_source_groups": 28
   },
   "guard": {

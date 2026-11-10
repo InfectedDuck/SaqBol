@@ -86,6 +86,18 @@ def _parser() -> argparse.ArgumentParser:
         help="override the contract's calibration rule with a row count, "
         "capped at 40%% of the fresh press pool",
     )
+    splitter.add_argument(
+        "--labels",
+        type=Path,
+        default=None,
+        help="directory of label records (default: labels/ beside the corpus directory, "
+        "if present)",
+    )
+    splitter.add_argument(
+        "--require-labels",
+        action="store_true",
+        help="leave out rows outside dev that do not carry two annotators' readings",
+    )
     fitter = commands.add_parser(
         "calibrate", help="fit the rules-only warning threshold on calibration data"
     )
@@ -143,6 +155,8 @@ def _splits(args: argparse.Namespace) -> int:
         seed=args.seed,
         calibration_size=args.calibration_size,
         exposure_path=args.exposure,
+        labels_dir=args.labels,
+        require_labels=args.require_labels,
     )
     counts = ", ".join(f"{name}={manifest['splits'][name]['n']}" for name in SPLIT_NAMES)
     _say(
@@ -150,6 +164,20 @@ def _splits(args: argparse.Namespace) -> int:
         f"{manifest['excluded_fragments']} fragments excluded, "
         f"{manifest['groups']['n_multi_row_groups']} multi-row groups kept together"
     )
+    labels = manifest["labels"]
+    n_rows = sum(tally["n"] for tally in labels["by_split"].values())
+    n_labelled = sum(tally["two_readings"] for tally in labels["by_split"].values())
+    _say(
+        f"labels ({manifest['status']}): {n_labelled} of {n_rows} rows carry two readings, "
+        f"{len(labels['records'])} label records read"
+    )
+    if labels["left_out_unlabelled"]:
+        _say(f"  {len(labels['left_out_unlabelled'])} rows without a label were left out")
+    if labels["records_without_a_message_row"]:
+        _say(
+            f"  {len(labels['records_without_a_message_row'])} labelled rows are not message "
+            "rows of this corpus; manifest.json lists them"
+        )
     _say(f"wrote {Path(args.out) / 'manifest.json'}")
     return 0
 

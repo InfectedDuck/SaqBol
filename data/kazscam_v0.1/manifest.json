@@ -1,7 +1,7 @@
 {
   "dataset_version": "kazscam-v0.1",
   "status": "provisional",
-  "built_at": "2026-11-10T18:22:14Z",
+  "built_at": "2026-11-10T19:54:01Z",
   "seed": 20260908,
   "corpus_rows": 126,
   "eligible_rows": 76,
@@ -226,6 +226,48 @@
       "source_groups": 0
     }
   },
+  "labels": {
+    "directory": null,
+    "records": [],
+    "require_labels": false,
+    "by_split": {
+      "train_synthetic": {
+        "n": 0,
+        "two_readings": 0,
+        "adjudicated": 0,
+        "collection_label": 0
+      },
+      "dev": {
+        "n": 76,
+        "two_readings": 0,
+        "adjudicated": 0,
+        "collection_label": 76
+      },
+      "calibration": {
+        "n": 0,
+        "two_readings": 0,
+        "adjudicated": 0,
+        "collection_label": 0
+      },
+      "test_press": {
+        "n": 0,
+        "two_readings": 0,
+        "adjudicated": 0,
+        "collection_label": 0
+      },
+      "test_donated": {
+        "n": 0,
+        "two_readings": 0,
+        "adjudicated": 0,
+        "collection_label": 0
+      }
+    },
+    "label_differs_from_collection": [],
+    "hard_negative_flag_dropped": [],
+    "left_out_unlabelled": [],
+    "records_without_a_message_row": [],
+    "two_passes_by_one_annotator": []
+  },
   "exposure_register": "data/exposure.json",
   "files": {
     "train_synthetic": "train_synthetic.jsonl",
@@ -238,5 +280,5 @@
     "PROVISIONAL: built from collection labels, not annotated. playbook_id, stage, annotator_a and annotator_b are null on every row. Rebuild after T407.",
     "`train_synthetic` is empty: the LLM paraphrases do not exist yet. When generated they must be derived from dev rows only, never from calibration or a test split, with the seed row's released id recorded in `source_row_id` so the second leakage rule (no synthetic row shares a source row with any test row) can be checked."
   ],
-  "corpus_commit": "41caa9e72b6732c52abb5d17861fbfb6962fdad8"
+  "corpus_commit": "51bc4a2f61deb33ad9f633781a239bc20b00fa58"
 }

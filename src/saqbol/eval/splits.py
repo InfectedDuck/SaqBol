@@ -45,6 +45,15 @@ paraphrases do not exist yet, and when they are generated they must come from
 `dev` rows only, with the seed row recorded in `source_row_id`, or the second
 leakage rule cannot be checked.
 
+**Labels come from label records.** A corpus row carries the collector's
+reading. Where a label record (`data/labels/`, contract section 6) holds two
+annotators' readings of the row, the released row takes its label, its
+script and both readings from the record, before any row is assigned, so the
+calibration strata are counted on the labels that will be released. A record
+whose text digest does not match the row stops the build. With
+`require_labels`, a row outside `dev` that has no record is left out and
+listed, which is how a release is built while a few rows are still unread.
+
 The normalization and similarity here mirror `tools/collect.py` exactly;
 `tests/test_splits.py` pins the two to each other. They are duplicated rather
 than imported because `tools/` is a script directory, not part of the
@@ -62,10 +71,12 @@ import subprocess
 import unicodedata
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from saqbol.eval.labels import RowLabel, load_records
 
 #: Contract section 6: the five released splits, in file order.
 SPLIT_NAMES: tuple[str, ...] = (
@@ -85,6 +96,10 @@ CALIBRATION_MAX_ROWS = 75
 DEFAULT_MAX_CALIBRATION_FRACTION = 0.4
 #: The exposure register, looked for beside the corpus directory.
 EXPOSURE_FILENAME = "exposure.json"
+#: The label records, looked for beside the corpus directory.
+LABELS_DIRNAME = "labels"
+#: Splits a row may be left out of for want of a label. `dev` is never thinned.
+HELD_OUT_SPLITS: tuple[str, ...] = ("calibration", "test_press", "test_donated")
 #: tools/collect.py: exact-on-normalized plus character-shingle Jaccard at 0.85.
 NEAR_DUP_THRESHOLD = 0.85
 SHINGLE = 5
@@ -384,6 +399,29 @@ def to_released_row(row: Mapping[str, Any], row_id: str) -> dict[str, Any]:
     }
 
 
+def apply_label(released: dict[str, Any], label: RowLabel) -> None:
+    """Replace the collector's reading on a released row with the annotators'."""
+    if label.text_sha256 != released["text_sha256"]:
+        raise CorpusError(
+            f"{released['corpus_id']}: the text is not the one that was labelled "
+            "(text_sha256 differs from the label record). Label it again, or restore the text."
+        )
+    released["label"] = label.gold.label
+    released["playbook_id"] = label.gold.playbook_id
+    released["annotator_a"] = str(label.annotator_a)
+    released["annotator_b"] = str(label.annotator_b)
+    released["adjudicated"] = label.gold.adjudicated
+    # The collector flags a hard negative on the assumption that the message
+    # is genuine. The annotators' answer overrides the assumption.
+    if label.gold.label != "legit":
+        released["hard_negative"] = False
+
+
+def is_labelled(row: Mapping[str, Any]) -> bool:
+    """Whether a released row carries two annotators' readings."""
+    return bool(row.get("annotator_a")) and bool(row.get("annotator_b"))
+
+
 # ---------------------------------------------------------------------------
 # the build
 # ---------------------------------------------------------------------------
@@ -431,6 +469,17 @@ def _tally(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _label_tally(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    rows = list(rows)
+    labelled = [r for r in rows if is_labelled(r)]
+    return {
+        "n": len(rows),
+        "two_readings": len(labelled),
+        "adjudicated": sum(1 for r in labelled if r["adjudicated"]),
+        "collection_label": len(rows) - len(labelled),
+    }
+
+
 def policy_calibration_size(fresh_press_rows: int) -> int:
     """Contract section 6: how many calibration rows a fresh press pool can spare."""
     if fresh_press_rows < CALIBRATION_MIN_POOL:
@@ -447,13 +496,17 @@ def assemble(
     calibration_size: int | None = None,
     max_calibration_fraction: float = DEFAULT_MAX_CALIBRATION_FRACTION,
     near_dup_threshold: float = NEAR_DUP_THRESHOLD,
+    labels: Mapping[str, RowLabel] | None = None,
+    require_labels: bool = False,
 ) -> SplitBuild:
     """Assign every eligible corpus row to a split. Pure and deterministic.
 
     `exposed_ids` are the corpus ids of rows the system was developed against,
     fragments included. `calibration_size=None` applies the contract's rule;
-    a number overrides it. See the module docstring for the rules. Raises
-    `CorpusError` on a row that cannot be released, naming it.
+    a number overrides it. `labels` are label-record rows by corpus id;
+    `require_labels` leaves a row outside `dev` out when it has none. See the
+    module docstring for the rules. Raises `CorpusError` on a row that cannot
+    be released, naming it.
     """
     if calibration_size is not None and calibration_size < 0:
         raise ValueError("calibration_size must not be negative")
@@ -474,6 +527,22 @@ def assemble(
     # Released ids follow corpus-id order and ignore the split, so the same
     # message keeps its id under a different seed.
     released = [to_released_row(row, ID_FORMAT.format(i)) for i, row in enumerate(eligible, 1)]
+    labels = labels or {}
+    relabelled: list[dict[str, str]] = []
+    unflagged: list[str] = []
+    for row in released:
+        record = labels.get(row["corpus_id"])
+        if record is None:
+            continue
+        before, was_hard = row["label"], row["hard_negative"]
+        apply_label(row, record)
+        if row["label"] != before:
+            relabelled.append(
+                {"corpus_id": row["corpus_id"], "collected_as": before, "label": row["label"]}
+            )
+        if was_hard and not row["hard_negative"]:
+            unflagged.append(row["corpus_id"])
+    eligible_ids = {row["corpus_id"] for row in released}
     groups = group_rows(eligible, threshold=near_dup_threshold)
     # Every row names its group by the released id of the group's first row,
     # so a reader of one split file can count independent sources without the
@@ -500,6 +569,7 @@ def assemble(
     press_groups: list[Group] = []
     mixed: list[str] = []
     pulled_in: list[str] = []
+    left_out: list[str] = []
     for group in groups:
         members = [eligible[i] for i in group.indices]
         ids = [str(m.get("id", "")) for m in members]
@@ -509,6 +579,19 @@ def assemble(
             dev_groups.append(group)
             pulled_in.extend(cid for cid in ids if cid not in exposed)
             continue
+        if require_labels:
+            # Grouping saw every row, so a row that is left out still kept its
+            # relatives together. What remains of the group is named after
+            # its first remaining row.
+            kept = tuple(i for i in group.indices if is_labelled(released[i]))
+            left_out.extend(released[i]["corpus_id"] for i in group.indices if i not in kept)
+            if not kept:
+                continue
+            if len(kept) < len(group):
+                group = replace(group, indices=kept)
+                members = [eligible[i] for i in kept]
+                for i in kept:
+                    released[i]["source_group"] = released[kept[0]]["id"]
         provenances = {str(m.get("provenance") or "") for m in members}
         if "donated" in provenances:
             donated_groups.append(group)
@@ -607,6 +690,14 @@ def assemble(
             "quota_by_label_lang": {"/".join(k): v for k, v in sorted(quotas.items())},
         },
         "splits": {name: _tally(split) for name, split in splits.items()},
+        "labels": {
+            "require_labels": require_labels,
+            "by_split": {name: _label_tally(split) for name, split in splits.items()},
+            "label_differs_from_collection": relabelled,
+            "hard_negative_flag_dropped": unflagged,
+            "left_out_unlabelled": sorted(left_out),
+            "records_without_a_message_row": sorted(set(labels) - eligible_ids),
+        },
     }
     return SplitBuild(splits=splits, report=report)
 
@@ -619,6 +710,8 @@ def build_splits(
     calibration_size: int | None = None,
     max_calibration_fraction: float = DEFAULT_MAX_CALIBRATION_FRACTION,
     near_dup_threshold: float = NEAR_DUP_THRESHOLD,
+    labels: Mapping[str, RowLabel] | None = None,
+    require_labels: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """The five splits, by name, from corpus rows in the `tools/collect.py` shape."""
     return assemble(
@@ -628,6 +721,8 @@ def build_splits(
         calibration_size=calibration_size,
         max_calibration_fraction=max_calibration_fraction,
         near_dup_threshold=near_dup_threshold,
+        labels=labels,
+        require_labels=require_labels,
     ).splits
 
 
@@ -727,12 +822,109 @@ PROVISIONAL_NOTE = (
     "annotator_a and annotator_b are null on every row. Rebuild after T407."
 )
 
+PARTLY_LABELLED_NOTE = (
+    "PROVISIONAL: {labelled} of {rows} rows carry two annotators' readings. The others carry "
+    "the collector's label, with playbook_id, annotator_a and annotator_b null."
+)
+
+ANNOTATED_NOTE = (
+    "Every row carries two annotators' readings; `adjudicated` marks the rows a logged "
+    "decision settled. stage is null: it is set only on multi-message threads."
+)
+
+
+def _status_note(report: Mapping[str, Any]) -> str:
+    n_rows, n_labelled = label_totals(report)
+    if build_status(report) == "annotated":
+        return ANNOTATED_NOTE
+    if n_labelled == 0:
+        return PROVISIONAL_NOTE
+    return PARTLY_LABELLED_NOTE.format(labelled=n_labelled, rows=n_rows)
+
 
 def _counts(tally: Mapping[str, int]) -> str:
     return ", ".join(f"{key} {n}" for key, n in tally.items()) or "none"
 
 
+def label_totals(report: Mapping[str, Any]) -> tuple[int, int]:
+    """Rows in the splits, and how many of them carry two readings."""
+    by_split = report["labels"]["by_split"].values()
+    return sum(t["n"] for t in by_split), sum(t["two_readings"] for t in by_split)
+
+
+def build_status(report: Mapping[str, Any]) -> str:
+    """`annotated` when every released row carries two readings, else `provisional`."""
+    n_rows, n_labelled = label_totals(report)
+    return "annotated" if n_rows and n_labelled == n_rows else "provisional"
+
+
+def _label_lines(manifest: Mapping[str, Any]) -> tuple[str, str]:
+    """The first line of the README and its paragraph on labels."""
+    labels = manifest["labels"]
+    n_rows, n_labelled = label_totals(manifest)
+    if n_labelled == 0:
+        return (
+            "PROVISIONAL splits, built from collection labels, not annotated: `playbook_id`, "
+            "`stage` and both annotator fields are null on every row, and these files must be "
+            "rebuilt after T407 (annotation) lands.\n\n",
+            "",
+        )
+    adjudicated = sum(t["adjudicated"] for t in labels["by_split"].values())
+    held_out = [labels["by_split"][name] for name in HELD_OUT_SPLITS]
+    table = "\n".join(
+        f"| `{name}` | {t['n']} | {t['two_readings']} | {t['adjudicated']} | "
+        f"{t['collection_label']} |"
+        for name, t in labels["by_split"].items()
+    )
+    paragraph = (
+        "\n## Labels\n\n"
+        f"{n_labelled} of {n_rows} rows carry two annotators' readings in `annotator_a` and "
+        f"`annotator_b`, and {adjudicated} of those were settled by a logged decision "
+        "(`adjudicated: true`). The reasons are in the label records under `data/labels/`. "
+        "A row with null annotator fields carries the collector's label and no script. "
+        "`stage` is null on every row: it is set only on multi-message threads.\n\n"
+        "| Split | Rows | Two readings | Adjudicated | Collector's label |\n"
+        "|---|---|---|---|---|\n"
+        f"{table}\n"
+    )
+    notes = []
+    if labels["left_out_unlabelled"]:
+        notes.append(
+            f"{len(labels['left_out_unlabelled'])} rows outside `dev` had no label record and "
+            "were left out of this build; `manifest.json` lists them."
+        )
+    if labels["label_differs_from_collection"]:
+        notes.append(
+            f"{len(labels['label_differs_from_collection'])} rows were released with a label "
+            "other than the one they were collected under."
+        )
+    if labels["hard_negative_flag_dropped"]:
+        notes.append(
+            f"{len(labels['hard_negative_flag_dropped'])} rows collected as hard negatives were "
+            "not labelled `legit` and lost the flag."
+        )
+    two_passes = labels.get("two_passes_by_one_annotator", [])
+    if two_passes:
+        notes.append(
+            f"On {len(two_passes)} rows the two readings are two passes by one annotator, made "
+            "apart and blind to each other. Agreement on those rows is intra-annotator; "
+            "agreement between annotators was not measured on them."
+        )
+    if notes:
+        paragraph += "\n" + "\n".join(f"- {note}" for note in notes) + "\n"
+    if manifest["status"] == "annotated":
+        return "", paragraph
+    unread = sum(t["collection_label"] for t in held_out)
+    first = (
+        f"PROVISIONAL splits: {n_labelled} of {n_rows} rows carry two annotators' readings and "
+        f"the rest carry the collector's label, {unread} of them in a calibration or test "
+        "split.\n\n"
+    )
+    return first, paragraph
+
+
 def _readme(manifest: Mapping[str, Any]) -> str:
+    first_line, label_paragraph = _label_lines(manifest)
     counts = "\n".join(
         f"| `{name}` | {tally['n']} | {tally['source_groups']} | {_counts(tally['by_label'])} | "
         f"{_counts(tally['by_lang'])} | {tally['hard_negative']} |"
@@ -758,11 +950,10 @@ def _readme(manifest: Mapping[str, Any]) -> str:
             f"hand, capped at {calib['max_fraction']:.0%} of the {pool}-row fresh press pool "
             f"({calib['fraction_of_pool']:.1%} used)."
         )
-    return f"""PROVISIONAL splits, built from collection labels, not annotated: `playbook_id`, `stage` and both annotator fields are null on every row, and these files must be rebuilt after T407 (annotation) lands.
+    flags = " --require-labels" if manifest["labels"]["require_labels"] else ""
+    return f"""{first_line}# KazScam v0.1 splits
 
-# KazScam v0.1 splits
-
-Built by `python -m saqbol.eval splits --corpus data/corpus --out data/kazscam_v0.1 --seed {manifest["seed"]}` on {manifest["built_at"]}. One JSONL per split in the shape of docs/02_DATA_CONTRACTS.md section 6, plus `text_sha256` (what the leakage rules key on) and `corpus_id` (the collection record the row came from). `manifest.json` records the seed, the counts and every group of rows that had to travel together.
+Built by `python -m saqbol.eval splits --corpus data/corpus --out data/kazscam_v0.1 --seed {manifest["seed"]}{flags}` on {manifest["built_at"]}. One JSONL per split in the shape of docs/02_DATA_CONTRACTS.md section 6, plus `text_sha256` (what the leakage rules key on) and `corpus_id` (the collection record the row came from). `manifest.json` records the seed, the counts and every group of rows that had to travel together.
 
 | Split | Rows | Source groups | By label | By lang | Hard negatives |
 |---|---|---|---|---|---|
@@ -775,7 +966,7 @@ Rows that share a source article, a translation or variant key, or near-identica
 - {manifest["excluded_fragments"]} `phrase_fragment` rows were excluded; fragments never enter a message split.
 - {groups["n_multi_row_groups"]} groups of {groups["rows_in_multi_row_groups"]} rows (one source article, parallel translations, variant groups, near-duplicates) were assigned as units.
 - {SYNTHETIC_NOTE}
-
+{label_paragraph}
 Leakage checks over these files live in `tests/test_splits.py`.
 """
 
@@ -799,11 +990,11 @@ def write_splits(
 
     manifest: dict[str, Any] = {
         "dataset_version": DATASET_VERSION,
-        "status": "provisional",
+        "status": build_status(build.report),
         "built_at": built_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         **build.report,
         "files": {name: f"{name}.jsonl" for name in SPLIT_NAMES},
-        "notes": [PROVISIONAL_NOTE, SYNTHETIC_NOTE],
+        "notes": [_status_note(build.report), SYNTHETIC_NOTE],
     }
     if corpus_commit:
         manifest["corpus_commit"] = corpus_commit
@@ -822,11 +1013,15 @@ def build_and_write(
     calibration_size: int | None = None,
     max_calibration_fraction: float = DEFAULT_MAX_CALIBRATION_FRACTION,
     exposure_path: str | os.PathLike[str] | None = None,
+    labels_dir: str | os.PathLike[str] | None = None,
+    require_labels: bool = False,
 ) -> dict[str, Any]:
     """Read the corpus, build the splits, write the directory. Returns the manifest.
 
     The exposure register is `exposure_path`, or `exposure.json` beside the
     corpus directory when that exists. A register named explicitly must exist.
+    The label records are read from `labels_dir`, or from `labels/` beside the
+    corpus directory when that exists, by the same rule.
     """
     rows = load_corpus(corpus_dir)
     register_path = Path(exposure_path) if exposure_path is not None else None
@@ -836,12 +1031,32 @@ def build_and_write(
     exposed: set[str] = set()
     if register_path is not None:
         exposed = exposed_corpus_ids(rows, load_exposure(register_path))
+    records_path = Path(labels_dir) if labels_dir is not None else None
+    if records_path is None:
+        default = Path(corpus_dir).parent / LABELS_DIRNAME
+        records_path = default if default.is_dir() else None
+    records = load_records(records_path) if records_path is not None else None
     build = assemble(
         rows,
         seed=seed,
         exposed_ids=exposed,
         calibration_size=calibration_size,
         max_calibration_fraction=max_calibration_fraction,
+        labels=records.rows if records is not None else None,
+        require_labels=require_labels,
     )
     build.report["exposure_register"] = register_path.as_posix() if register_path else None
+    intra = records.intra if records is not None else frozenset()
+    build.report["labels"] = {
+        "directory": records_path.as_posix() if records_path else None,
+        "records": list(records.files) if records is not None else [],
+        **build.report["labels"],
+        # Released rows whose two readings are one person's two passes.
+        "two_passes_by_one_annotator": sorted(
+            row["corpus_id"]
+            for split in build.splits.values()
+            for row in split
+            if is_labelled(row) and row["corpus_id"] in intra
+        ),
+    }
     return write_splits(build, out_dir, corpus_commit=git_commit())

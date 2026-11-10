@@ -17,6 +17,12 @@ existed cannot show that a cell clears a floor, so its numbers are not
 printed either. A floor that passed whenever the evidence for it was missing
 would not be a floor.
 
+**A test number needs annotated labels.** A row that has not been read by
+two annotators carries the label its collector gave it, which is one
+person's reading at the moment of collection and the thing the annotation
+exists to check. So the held-out press split earns a tier only when every
+one of its rows carries two readings, whatever its size.
+
 Three kinds of rule:
 
 - a *slice* (one language of one split, or a whole split) prints no metric
@@ -81,6 +87,8 @@ def count_support(rows: Iterable[_Row]) -> dict[str, Any]:
     `n_source_groups` is present only when every row names its group. A file
     built before the field existed gets no group count, since counting each
     of its rows as independent would claim something nobody checked.
+    `n_double_annotated` counts the rows that carry both annotators'
+    readings; a row object without the fields counts as unread.
     """
     rows = list(rows)
     facts: dict[str, Any] = {
@@ -88,6 +96,9 @@ def count_support(rows: Iterable[_Row]) -> dict[str, Any]:
         "by_label": dict(sorted(Counter(r.label for r in rows).items())),
         "by_lang": dict(sorted(Counter(r.lang for r in rows).items())),
         "n_hard_negative": sum(1 for r in rows if r.hard_negative),
+        "n_double_annotated": sum(
+            1 for r in rows if getattr(r, "annotator_a", None) and getattr(r, "annotator_b", None)
+        ),
     }
     if rows and all(r.source_group for r in rows):
         facts["n_source_groups"] = len({r.source_group for r in rows})
@@ -177,6 +188,20 @@ def release_tier(
             "none",
             f"{split} is under the floor for a pilot: {'; '.join(short)}. "
             "No test number is published.",
+        )
+    annotated = _count(facts.get("n_double_annotated"))
+    if annotated is None:
+        return Release(
+            "none",
+            f"This results file does not record how many {split} rows two annotators read, so "
+            "no test number is published. Run the evaluation again.",
+        )
+    if annotated < n_rows:
+        return Release(
+            "none",
+            f"{n_rows - annotated} of the {n_rows} {split} rows do not carry two annotators' "
+            "readings. Their labels are the collector's, and no test number is published from "
+            "them.",
         )
     short = _missing(
         [

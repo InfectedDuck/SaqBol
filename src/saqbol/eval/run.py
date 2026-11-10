@@ -105,6 +105,8 @@ class DatasetRow(BaseModel):
     lang: str = Field(min_length=1)
     hard_negative: bool = False
     source_group: str | None = None
+    annotator_a: str | None = None
+    annotator_b: str | None = None
     text_translated: str | None = None
 
     @model_validator(mode="after")

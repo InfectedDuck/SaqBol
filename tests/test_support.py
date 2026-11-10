@@ -28,12 +28,22 @@ def row(i: int, label: str = "scam", lang: str = "ru", *, hard=False, group: str
     )
 
 
-def facts(n_rows: int, legit: int, *, hard: int = 0, ru: int | None = None, kk: int = 0) -> dict:
+def facts(
+    n_rows: int,
+    legit: int,
+    *,
+    hard: int = 0,
+    ru: int | None = None,
+    kk: int = 0,
+    annotated: int | None = None,
+) -> dict:
+    """Support facts of a split. Every row carries two readings unless `annotated` says less."""
     return {
         "n_rows": n_rows,
         "by_label": {"legit": legit, "scam": n_rows - legit},
         "by_lang": {"ru": n_rows - kk if ru is None else ru, "kk": kk},
         "n_hard_negative": hard,
+        "n_double_annotated": n_rows if annotated is None else annotated,
     }
 
 
@@ -73,8 +83,23 @@ def test_support_counts_rows_classes_languages_hard_negatives_and_groups():
         "by_label": {"ambiguous": 1, "legit": 1, "scam": 3},
         "by_lang": {"kk": 2, "ru": 3},
         "n_hard_negative": 1,
+        "n_double_annotated": 0,
         "n_source_groups": 3,
     }
+
+
+def test_a_row_counts_as_annotated_only_with_both_readings():
+    def read(i: int, a: str | None, b: str | None):
+        return SimpleNamespace(**vars(row(i)), annotator_a=a, annotator_b=b)
+
+    rows = [
+        read(1, "scam/kz.delivery_link", "scam"),
+        read(2, "legit", "legit"),
+        read(3, "scam", None),
+        read(4, None, None),
+        row(5),  # a row object from before the fields existed
+    ]
+    assert count_support(rows)["n_double_annotated"] == 2
 
 
 def test_groups_are_not_counted_when_any_row_names_none():
@@ -166,6 +191,30 @@ def test_a_benchmark_needs_every_one_of_its_floors(kwargs, short):
 def test_a_split_that_meets_every_floor_is_a_benchmark():
     release = release_tier(facts(200, 60, hard=40, ru=100, kk=100))
     assert release.tier == "benchmark"
+
+
+def test_one_unread_row_withholds_every_test_number():
+    """The collector's label is what annotation checks; it is not a test label."""
+    release = release_tier(facts(200, 60, hard=40, ru=100, kk=100, annotated=199))
+    assert release.tier == "none"
+    assert "1 of the 200 `test_press` rows do not carry two annotators' readings" in release.reason
+    assert "no test number is published" in release.reason
+
+    assert release_tier(facts(80, 25, annotated=0)).tier == "none"
+    assert release_tier(facts(80, 25, annotated=80)).tier == "pilot"
+
+
+def test_a_split_that_does_not_say_how_many_rows_were_read_has_no_tier():
+    unknown = facts(200, 60, hard=40, ru=100, kk=100)
+    del unknown["n_double_annotated"]
+    release = release_tier(unknown)
+    assert release.tier == "none"
+    assert "does not record how many `test_press` rows two annotators read" in release.reason
+
+
+def test_a_split_too_small_for_a_pilot_is_told_so_before_anything_about_labels():
+    release = release_tier(facts(46, 10, annotated=0))
+    assert "46 rows (needs 60)" in release.reason
 
 
 def test_a_partial_run_has_no_tier_however_large_the_split():

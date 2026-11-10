@@ -347,7 +347,9 @@ Released on Hugging Face as JSONL, one file per split.
 }
 ```
 
-Label set: `scam` | `legit` | `ambiguous`. Playbook ID only when `label == scam`.
+Label set: `scam` | `legit` | `ambiguous`. Playbook ID only when `label == scam`: one of the thirteen playbooks, `other_scam`, or null when the script was not named.
+
+`annotator_a` and `annotator_b` are the two readings of the row, one per annotator, written as the label, with the script after a slash where the annotator named one: `scam/kz.delivery_link`, `scam`, `legit`, `ambiguous`. Both are null on a row that has not been annotated, and `label` is then the collector's provisional reading. `adjudicated` is true where the two readings differed and a logged decision set the label. `stage` is null unless the row is a multi-message thread; the labelling page never asks for it.
 
 `source_group` is the `id` of the first row of the row's source group. Rows that share a source article, a parallel-pair or variant key, or near-identical text are one group and carry the same value; a row with no such relative carries its own `id`. A group is one piece of evidence however many rows it holds, so the evaluation prints the number of groups beside every row count. The split files carry two more fields after it for tracing: `text_sha256`, which the leakage rules are stated in, and `corpus_id`, the collection record the row came from.
 
@@ -372,6 +374,54 @@ Hard negatives live in every split, flagged by `hard_negative: true`; the report
 - The calibration split is disjoint from every test split.
 - Rows that share a source article, a parallel-pair or variant key, or near-identical text are one group, and a group is never divided between splits.
 - No row listed in `data/exposure.json`, and no row grouped with one, appears in `calibration`, `test_press` or `test_donated`.
+
+### Label records
+
+The annotators' answers reach the splits through label records: one JSON file per annotation batch in `data/labels/`, written by `tools/labels.py merge` and read by the split builder. Nothing else sets `label`, `playbook_id`, `annotator_a`, `annotator_b` or `adjudicated` on a released row.
+
+```json
+{
+  "schema": "kazscam-labels/1",
+  "batch": "batch-annot-01",
+  "created_at": "2027-01-15",
+  "kind": "inter-annotator",
+  "annotators": {"a": "annotator-1", "b": "annotator-2"},
+  "rows": [
+    {
+      "corpus_id": "ks-press-03-014",
+      "text_sha256": "9f2c…",
+      "annotator_a": "scam/kz.delivery_link",
+      "annotator_b": "scam/kz.fake_store",
+      "label": "scam",
+      "playbook_id": "kz.delivery_link",
+      "adjudicated": true,
+      "reason": "The payment page sits behind a parcel notice; the payload decides.",
+      "decided_by": "discussion"
+    }
+  ],
+  "not_labelled": ["ks-press-03-020"]
+}
+```
+
+A row is keyed by `corpus_id`, because released ids are renumbered whenever the corpus grows, and by `text_sha256`, so a label cannot follow a text that was edited after it was read. The build stops on a digest that does not match.
+
+How two readings become a label:
+
+| The two readings | Result |
+|---|---|
+| Same label, same script (or neither named one) | That label and script. `adjudicated: false`, no reason |
+| Different label | A decision is required |
+| Both `scam`, different scripts, or one named a script and the other did not | A decision is required |
+
+A decision gives a label from the label set, a script (only with `scam`, and it may be null), a one-line `reason` and `decided_by`: a third annotator's name or `discussion`. It may be any label, not only one of the two readings. `merge` refuses to write a record while a decision is missing, and a record whose label does not follow from its readings by this table does not load. The same row may not appear in two records.
+
+`not_labelled` lists batch items that have fewer than two readings, for example an item an annotator skipped. Those rows keep the collector's label and null annotator fields.
+
+`annotators` names who is behind each column. The labelling page derives an annotator's id from the name they typed, so `merge` takes a pseudonym for each annotator, and the record should carry the pseudonym unless the annotator agreed to be named.
+
+`kind` is `inter-annotator` when the two columns are two people, and `intra-annotator` when they are two passes by one person, made at least two weeks apart and blind to each other (the fallback in the roadmap when no second annotator is found). The resolution rule is the same. The manifest lists the rows whose readings are two passes, so that agreement on them is never reported as agreement between annotators.
+
+A build records in `manifest.json` how many rows of each split carry two readings. `status` is `annotated` only when every row of every split does, and `provisional` otherwise. A hard negative whose final label is not `legit` loses the flag and is listed in the manifest. The leaderboard publishes no test number while any `test_press` row lacks two readings.
 
 ---
 

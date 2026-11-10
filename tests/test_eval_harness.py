@@ -479,13 +479,17 @@ def results_of(rows: list[ResultRow], **extra) -> Results:
     return Results(run_id="t", dataset_version="kazscam-test", n_bootstrap=100, rows=rows, **extra)
 
 
-def press_support(n_rows: int, legit: int, *, hard: int = 0, kk: int = 0) -> dict:
+def press_support(
+    n_rows: int, legit: int, *, hard: int = 0, kk: int = 0, annotated: int | None = None
+) -> dict:
+    """Support of a press split whose rows all carry two readings, unless told otherwise."""
     return {
         "test_press": {
             "n_rows": n_rows,
             "by_label": {"legit": legit, "scam": n_rows - legit},
             "by_lang": {"kk": kk, "ru": n_rows - kk},
             "n_hard_negative": hard,
+            "n_double_annotated": n_rows if annotated is None else annotated,
         }
     }
 
@@ -525,6 +529,7 @@ def test_the_harness_records_the_support_behind_every_cell(tmp_path):
             "by_label": {"ambiguous": 1, "legit": 4, "scam": 7},
             "by_lang": {"kk": 5, "ru": 7},
             "n_hard_negative": 3,
+            "n_double_annotated": 12,
             "n_source_groups": 10,
         }
     }
@@ -657,6 +662,23 @@ def test_a_benchmark_prints_the_full_table_without_the_pilot_title():
     assert "**Release tier: benchmark.**" in text
     assert "(pilot)" not in text
     assert "0.800 [0.700, 0.900] | 0.100 [0.050, 0.200] |" in text
+
+
+def test_a_press_split_with_unread_rows_publishes_no_test_number():
+    results = results_of(
+        [
+            result_row(split="dev"),
+            result_row(split="test_press", n_rows=200, legit=60, hard=40, macro_f1=0.8),
+        ],
+        split_support=press_support(200, 60, hard=40, kk=100, annotated=188),
+    )
+    text = render_leaderboard(results)
+    assert "**Release tier: none.**" in text
+    assert "12 of the 200 `test_press` rows do not carry two annotators' readings" in text
+    assert WITHHELD_NOTE in text
+    assert "0.800" not in text
+    # The development table is not a test result and is printed as before.
+    assert "0.500 [0.400, 0.600]" in text.split("## test_press", 1)[0]
 
 
 def test_a_tier_of_none_withholds_the_donated_table_too():

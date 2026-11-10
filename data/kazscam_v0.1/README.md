@@ -2,7 +2,7 @@ PROVISIONAL splits, built from collection labels, not annotated: `playbook_id`, 
 
 # KazScam v0.1 splits
 
-Built by `python -m saqbol.eval splits --corpus data/corpus --out data/kazscam_v0.1 --seed 20260908` on 2026-11-10T18:22:14Z. One JSONL per split in the shape of docs/02_DATA_CONTRACTS.md section 6, plus `text_sha256` (what the leakage rules key on) and `corpus_id` (the collection record the row came from). `manifest.json` records the seed, the counts and every group of rows that had to travel together.
+Built by `python -m saqbol.eval splits --corpus data/corpus --out data/kazscam_v0.1 --seed 20260908` on 2026-11-10T19:54:01Z. One JSONL per split in the shape of docs/02_DATA_CONTRACTS.md section 6, plus `text_sha256` (what the leakage rules key on) and `corpus_id` (the collection record the row came from). `manifest.json` records the seed, the counts and every group of rows that had to travel together.
 
 | Split | Rows | Source groups | By label | By lang | Hard negatives |
 |---|---|---|---|---|---|
