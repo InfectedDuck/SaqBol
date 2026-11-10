@@ -8,7 +8,7 @@ Deliver a usable scam checker, a human-reviewed KazScam dataset, and reproducibl
 
 ## Where the project stands
 
-Checked on 11 November 2026: 1,641 offline tests pass, 22 are skipped and 2 are expected failures; lint and format checks are clean; the smoke evaluation runs.
+Checked on 11 November 2026: 1,661 offline tests pass, 22 are skipped and 2 are expected failures; lint and format checks are clean; the smoke evaluation runs.
 
 | Mini-plan | State | Evidence or dependency |
 |---|---|---|
@@ -24,6 +24,7 @@ Checked on 11 November 2026: 1,641 offline tests pass, 22 are skipped and 2 are 
 | P07 annotation pilot | batch and agreement tool ready; labelling blocked: two co-annotators | [P07 record](17_P07_PILOT_PREPARATION_2026-11-11.md): 30 `dev` messages drawn, agreement computed from the page's export. No label exists yet |
 | P08 live pilot | blocked: a host and a bot token | — |
 | Label pipeline for P09 and P10 | tooling done; no row is labelled | [record](19_LABEL_PIPELINE_2026-11-11.md): labelling batches, agreement, logged decisions, label records, the split builder applying them, and no test number while a `test_press` row lacks two readings |
+| Analysis rules for P12 | fixed before the test set; the hypothesis tests are open | [record](20_ANALYSIS_RULES_2026-11-11.md): every interval is the wider of a row and a source-group interval, the hard-negative bound counts groups, and the playbook score has its floor and treats `other_scam` as naming no playbook |
 | P09 to P15 | not started | In the order below |
 
 Three facts shape the rest of the plan:

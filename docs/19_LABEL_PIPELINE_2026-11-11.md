@@ -62,7 +62,7 @@ Without label records the builder's output is unchanged: the committed JSONL fil
 | Any label at all | The freeze tag, fresh rows, and two annotators or the two-pass fallback |
 | Named or pseudonymous annotators | Each annotator's answer, before the first record is committed |
 | Should two passes by one person cap the release tier? | The owner. Today such rows are disclosed in the manifest and the README, and the tier is not lowered |
-| Script accuracy when the right answer is "no playbook" | A decision before the tag. The script metric treats a missing script as its own class, so a row whose label is `other_scam`, or a scam row with no script, counts against a system that names no playbook for it. Not changed here: it is a change to a reported metric |
+| Script accuracy when the right answer is "no playbook" | Settled the same day by the [analysis rules](20_ANALYSIS_RULES_2026-11-11.md): `other_scam` and no script are one answer, the one a system gives by naming none, and that class is never averaged |
 | One batch on the page at a time | Procedure. The page loads every batch in its database together, so the previous batch is removed when the next is written |
 | Live round trip through the page's database | A working connection. Still not done; see the pilot preparation record |
 
