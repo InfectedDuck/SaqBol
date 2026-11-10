@@ -49,6 +49,10 @@ LANGS: tuple[str, ...] = (*(lang.value for lang in Lang), "all")
 #: than any interval justifies and still kills the 0.7810000000000001 noise
 #: that would otherwise churn the diff.
 WRITE_NDIGITS = 6
+#: A row's `ci_resampled` when each of its intervals is the wider of a row
+#: interval and a source-group interval. A row without the key was written
+#: before groups were resampled, and its intervals resampled rows only.
+GROUPED_CI = "rows and source groups"
 
 
 class ResultRow(BaseModel):

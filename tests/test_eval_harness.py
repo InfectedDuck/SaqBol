@@ -315,16 +315,80 @@ def test_score_cell_matches_hand_computation():
     # with the abstention kept in the denominator.
     assert score.fpr_hard_negative == pytest.approx(1 / 3)
     assert score.extra["n_hard_negative"] == 3
+    # Every row is its own group here, so both intervals are the same seven.
+    assert score.extra["ci_resampled"] == "rows and source groups"
+    assert score.extra["ci_n_groups"] == 7
+    assert score.extra["ci95_rows"] == score.extra["ci95_groups"] == list(score.macro_f1.ci)
+    assert score.extra["fpr_hard_negative_n_groups"] == 3
     # Playbooks over the answered scam rows 1-4: gold A A B B, predicted A A B none.
-    #   A: 2*2/(2+2) = 1.0; B: 2*1/(2+1) = 2/3; none: 0/(0+1) = 0 -> mean 5/9
+    # Neither playbook has the ten gold rows it needs to be averaged, so no
+    # macro-F1 is recorded; top-1 accuracy over the rows that name a playbook
+    # is 3 of 4. Per class, A: 2*2/(2+2) = 1.0; B: 2*1/(2+1) = 2/3.
     assert score.extra["playbook_n"] == 4
-    assert score.extra["playbook_macro_f1"] == pytest.approx((1.0 + 2 / 3 + 0.0) / 3)
+    assert score.extra["playbook_n_by_class"] == {a: 2, b: 2}
+    assert score.extra["playbook_supported"] == []
+    assert "playbook_macro_f1" not in score.extra
+    assert score.extra["playbook_accuracy"] == pytest.approx(0.75)
+    assert score.extra["playbook_accuracy_n"] == 4
+    assert score.extra["playbook_f1"] == pytest.approx({a: 1.0, b: 2 / 3})
     # Stage: rows 1 and 2 have the right playbook and a gold stage; row 3 has
     # no gold stage, row 4 the wrong playbook. One of the two is right.
     assert score.extra["stage_n_eligible"] == 2
     assert score.extra["stage_n_correct"] == 1
     assert score.extra["stage_accuracy"] == pytest.approx(0.5)
     assert score.extra["n_errors"] == 1
+
+
+def test_other_scam_and_no_playbook_are_one_answer_and_never_averaged():
+    a = "kz.bank_security_call"
+    rows = [
+        *(_row(i, "scam", playbook_id=a) for i in range(10)),
+        *(_row(10 + i, "scam", playbook_id="other_scam") for i in range(3)),
+        *(_row(13 + i, "scam") for i in range(2)),
+    ]
+    predictions = [
+        *(Prediction(band="scam", playbook_id=a) for _ in range(8)),
+        *(Prediction(band="scam") for _ in range(2)),
+        # An annotator's `other_scam` and a system that names no playbook agree.
+        *(Prediction(band="scam") for _ in range(3)),
+        Prediction(band="scam", playbook_id=a),
+        Prediction(band="scam"),
+    ]
+    score = score_cell(rows, predictions, seed=1, n_bootstrap=200)
+
+    assert score.extra["playbook_n_by_class"] == {a: 10}
+    assert score.extra["playbook_supported"] == [a]
+    # A: tp 8, gold 10, predicted 9 (one of them on a row with no playbook).
+    assert score.extra["playbook_macro_f1"] == pytest.approx(2 * 8 / (10 + 9))
+    # Accuracy only over the ten rows that name a playbook: 8 of 10.
+    assert score.extra["playbook_accuracy"] == pytest.approx(0.8)
+    assert score.extra["playbook_accuracy_n"] == 10
+    assert set(score.extra["playbook_f1"]) == {a}
+
+
+def test_a_slice_whose_scams_fit_no_playbook_gets_no_playbook_score():
+    rows = [_row(i, "scam", playbook_id="other_scam") for i in range(4)]
+    score = score_cell(rows, [Prediction(band="scam")] * 4, seed=1, n_bootstrap=50)
+    assert not any(key.startswith("playbook") for key in score.extra)
+
+
+def test_the_harness_resamples_the_source_groups_of_the_rows():
+    rows = [
+        _row(1, "scam", source_group="art-1"),
+        _row(2, "scam", source_group="art-1"),
+        _row(3, "scam", source_group="art-2"),
+        _row(4, "legit", hard_negative=True, source_group="bank-1"),
+        _row(5, "legit", hard_negative=True, source_group="bank-1"),
+        _row(6, "legit", hard_negative=True),
+    ]
+    predictions = [Prediction(band="scam")] * 3 + [Prediction(band="likely_safe")] * 3
+    score = score_cell(rows, predictions, seed=1, n_bootstrap=100)
+    # art-1, art-2, bank-1, and row 6 on its own.
+    assert score.extra["ci_n_groups"] == 4
+    assert score.extra["fpr_hard_negative_n_groups"] == 2
+    # None of the hard negatives was flagged: the bound counts two groups.
+    assert score.extra["fpr_hard_negative_ci_method"] == "exact_binomial"
+    assert score.extra["fpr_hard_negative_ci95"][1] == pytest.approx(1 - 0.05 ** (1 / 2))
 
 
 def test_a_system_that_answers_nothing_has_no_macro_f1():
@@ -730,9 +794,70 @@ def test_the_header_states_the_floors_that_were_applied():
     assert "fewer than 30 rows" in text
     assert "at least 10 rows of each class" in text
     assert "at least 30 hard negatives" in text
+    assert "playbooks with at least 10 gold rows" in text
+    # A file written before intervals resampled groups says what it did.
     assert "The intervals resample rows, not groups" in text
     loose = render_leaderboard(results, floors=TINY_FLOORS)
     assert "fewer than 1 rows" in loose
+
+
+def test_the_header_says_the_intervals_resampled_source_groups():
+    results = results_of([result_row(ci_resampled="rows and source groups", ci_n_groups=28)])
+    text = render_leaderboard(results)
+    assert "Each interval is the wider of two" in text
+    assert "The intervals resample rows, not groups" not in text
+
+
+def _playbook_row(supported: int, named_rows: int, **extra) -> ResultRow:
+    """A development row whose slice names playbooks: `supported` of them have ten rows."""
+    counts = {f"kz.p{i:02d}": 10 for i in range(supported)}
+    if named_rows > 10 * supported:
+        counts["kz.rare"] = named_rows - 10 * supported
+    return result_row(
+        ci_resampled="rows and source groups",
+        playbook_floor=10,
+        playbook_n_by_class=counts,
+        playbook_supported=sorted(c for c in counts if c != "kz.rare"),
+        playbook_macro_f1=0.61,
+        playbook_ci95=[0.5, 0.7],
+        playbook_accuracy=0.72,
+        playbook_accuracy_ci95=[0.6, 0.8],
+        playbook_accuracy_n=named_rows,
+        **extra,
+    )
+
+
+def test_the_playbook_column_prints_macro_f1_with_five_supported_playbooks():
+    text = render_leaderboard(results_of([_playbook_row(supported=5, named_rows=56)]))
+    line = table_line(text, "rules_only", "none", "all", "none", "76 (28)")
+    assert "| 0.610 [0.500, 0.700] |" in line
+    assert "acc " not in line
+    assert "- `all`: averaged: `kz.p00` 10" in text
+    assert "under the floor: `kz.rare` 6" in text
+
+
+def test_the_playbook_column_falls_back_to_top1_accuracy_under_five():
+    text = render_leaderboard(results_of([_playbook_row(supported=2, named_rows=34)]))
+    line = table_line(text, "rules_only", "none", "all", "none", "76 (28)")
+    assert "| acc 0.720 [0.600, 0.800] |" in line
+    assert "0.610" not in line
+
+
+def test_the_playbook_accuracy_needs_a_slice_of_rows_that_name_a_playbook():
+    text = render_leaderboard(results_of([_playbook_row(supported=1, named_rows=12)]))
+    line = table_line(text, "rules_only", "none", "all", "none", "76 (28)")
+    assert "not reported (12 rows name a playbook)" in line
+    assert "0.720" not in line
+    assert "- `all`: averaged: `kz.p00` 10; under the floor: `kz.rare` 2" in text
+
+
+def test_an_old_playbook_score_without_its_support_is_not_printed():
+    old = result_row(playbook_macro_f1=0.55, playbook_ci95=[0.4, 0.7])
+    line = table_line(
+        render_leaderboard(results_of([old])), "rules_only", "none", "all", "none", "76 (28)"
+    )
+    assert "not reported (playbook support not recorded)" in line
+    assert "0.550" not in line
 
 
 def test_the_cli_runs_the_smoke_matrix_and_renders_the_leaderboard(tmp_path, capsys):

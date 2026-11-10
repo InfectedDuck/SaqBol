@@ -93,12 +93,15 @@ Models on the leaderboard: DeepSeek-V3, Qwen3, GPT-4o-mini, Llama-3.3-70B. Fixed
 
 | Metric | Definition | Why |
 |---|---|---|
-| Macro-F1 | Over `scam` / `legit`, and separately over the 13-way playbook label | Headline |
-| 95% CI | Bootstrap, 10,000 resamples, stratified by class | No number ships without one |
-| FPR on hard negatives | False positives divided by hard-negative count. When none or all of them are flagged, the bootstrap interval has no width, so the exact one-sided binomial bound is reported instead and marked in the table | The metric that decides whether people uninstall |
+| Macro-F1 | Over `scam` / `legit` | Headline |
+| Playbook score | Over the scam rows the system answered. Macro-F1 averaged over the playbooks with at least 10 gold rows in the slice, when at least five playbooks have them; otherwise top-1 accuracy over the rows whose gold label names a playbook, which needs 30 such rows. `other_scam` and no script are one answer, the one a system gives by naming none; that class is scored and never averaged | Whether the system recognises the script, not only the scam |
+| 95% CI | Percentile bootstrap, 10,000 resamples, stratified by class. Each interval is the wider of two from the same seed: one resampling rows, one resampling whole source groups among the groups that hold the same gold labels | No number ships without one. Rows quoted from one article are not independent evidence, and few articles make a group interval too narrow |
+| FPR on hard negatives | False positives divided by hard-negative count. When none or all of them are flagged, the bootstrap interval has no width, so the exact one-sided binomial bound is reported instead and marked in the table. The bound counts each source group of hard negatives as one trial | The metric that decides whether people uninstall |
 | Abstention coverage | Share not answered `unsure` | |
 | Risk at coverage | Error rate among answered items, plotted against coverage | Proves abstention buys something |
 | Stage accuracy | Threads only | Secondary |
+
+The playbook score, the interval and the bound over groups were fixed on 11 November 2026, before any test row was collected ([record](20_ANALYSIS_RULES_2026-11-11.md)). A change made after a test row has been read is a new analysis and is reported as one.
 
 **Reporting rule**: no claim that one system beats another unless the 95% confidence intervals do not overlap. Put that sentence in the README and in the report. It is a small sentence that signals a great deal.
 

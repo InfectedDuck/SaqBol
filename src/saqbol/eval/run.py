@@ -32,6 +32,11 @@ F1 and are excluded from it, counted in `n_ambiguous`.
 **Everything is seeded.** The bootstrap seed comes from the config (default
 20260908), the same seed is used for every cell, and the seed is written into
 every results row. Two runs over the same rows produce the same numbers.
+
+Every interval is the wider of a row interval and a source-group interval
+(`metrics.bootstrap_ci`); a row that names no group is a group of one. The
+playbook score follows `playbook_class`, and is averaged only over the
+playbooks with enough gold rows in the slice (`support.Floors.playbook_rows`).
 """
 
 from __future__ import annotations
@@ -42,7 +47,8 @@ import math
 import os
 import random
 import subprocess
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,8 +59,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from saqbol.core.fuse import DEFAULT_THRESHOLDS, DEFAULT_WEIGHTS
 from saqbol.eval import metrics
 from saqbol.eval.config import LLM_SYSTEMS, EvalConfig, config_hash
-from saqbol.eval.results import ResultRow, Results, write_results
-from saqbol.eval.support import count_support
+from saqbol.eval.labels import OTHER_SCAM
+from saqbol.eval.results import GROUPED_CI, ResultRow, Results, write_results
+from saqbol.eval.support import DEFAULT_FLOORS, count_support
 from saqbol.eval.systems import (
     ABSTAIN_BAND,
     NO_MODEL,
@@ -72,7 +79,8 @@ GoldLabel = Literal["scam", "legit", "ambiguous"]
 #: The label space of the headline macro-F1.
 BINARY_LABELS: tuple[str, ...] = ("legit", "scam")
 #: The class a scam row belongs to when no playbook is named, on either side:
-#: a gold scam that fits none of the scripts, or a system that named none.
+#: a gold scam that fits none of the scripts, or a system that named none. It
+#: is scored like any class and never averaged, since it is not a playbook.
 MISSING_PLAYBOOK = "none"
 #: The row field the `translated` ablation reads; absent on untranslated rows.
 TRANSLATION_FIELD = "text_translated"
@@ -271,6 +279,24 @@ def _defined(values: Mapping[str, float]) -> dict[str, float]:
     return {k: v for k, v in values.items() if not math.isnan(v)}
 
 
+def group_of(row: DatasetRow) -> Hashable:
+    """The unit an interval resamples: the row's source group, or the row alone."""
+    return ("group", row.source_group) if row.source_group else ("row", row.id)
+
+
+def playbook_class(playbook_id: str | None) -> str:
+    """The class a scam row is scored under: its playbook, or `none`.
+
+    An annotator who reads `other_scam` says the scam fits none of the
+    playbooks, which is what a system says by naming none, so the two are one
+    answer. Scoring them as two classes would mark a system wrong on every
+    such row for agreeing with the annotator.
+    """
+    if not playbook_id or playbook_id == OTHER_SCAM:
+        return MISSING_PLAYBOOK
+    return playbook_id
+
+
 def score_cell(
     rows: Sequence[DatasetRow],
     predictions: Sequence[Prediction],
@@ -294,21 +320,33 @@ def score_cell(
     y_pred = [band_to_label(p.band, positive_bands) for p in predictions]
     abstain = metrics.abstain_rate(y_pred)
 
+    groups = [group_of(r) for r in rows]
     n_ambiguous = sum(1 for t in y_true if t == "ambiguous")
-    scorable = [(t, p) for t, p in zip(y_true, y_pred, strict=True) if t != "ambiguous"]
-    answered = [(t, p) for t, p in scorable if p != ABSTAIN_BAND]
+    scorable = [
+        (t, p, g) for t, p, g in zip(y_true, y_pred, groups, strict=True) if t != "ambiguous"
+    ]
+    answered = [(t, p, g) for t, p, g in scorable if p != ABSTAIN_BAND]
     if not answered:
         raise CellSkipped(
             f"macro-F1 undefined: the system answered none of the {len(scorable)} scorable rows"
         )
-    bin_true = [t for t, _ in answered]
-    bin_pred = [p for _, p in answered]
+    bin_true = [t for t, _, _ in answered]
+    bin_pred = [p for _, p, _ in answered]
 
     estimate = metrics.bootstrap_ci(
-        bin_true, bin_pred, seed=seed, n_resamples=n_bootstrap, labels=BINARY_LABELS
+        bin_true,
+        bin_pred,
+        seed=seed,
+        n_resamples=n_bootstrap,
+        labels=BINARY_LABELS,
+        groups=[g for _, _, g in answered],
     )
     extra: dict[str, Any] = {
         "seed": seed,
+        "ci_resampled": GROUPED_CI,
+        "ci_n_groups": estimate.n_groups,
+        "ci95_rows": list(estimate.ci_rows or estimate.ci),
+        "ci95_groups": list(estimate.ci_groups or estimate.ci),
         "n_rows": n,
         "n_answered": sum(1 for p in y_pred if p != ABSTAIN_BAND),
         "n_ambiguous": n_ambiguous,
@@ -329,44 +367,107 @@ def score_cell(
     if any(hard):
         fpr = metrics.hard_negative_fpr(y_true, y_pred, hard)
         fpr_ci = metrics.hard_negative_fpr_ci(
-            y_true, y_pred, hard, seed=seed, n_resamples=n_bootstrap
+            y_true, y_pred, hard, seed=seed, n_resamples=n_bootstrap, groups=groups
         )
         extra["n_hard_negative"] = sum(hard)
         extra["fpr_hard_negative_ci95"] = [fpr_ci.lo, fpr_ci.hi]
         extra["fpr_hard_negative_ci_method"] = fpr_ci.method
+        extra["fpr_hard_negative_n_groups"] = fpr_ci.n_groups
 
-    # The 13-way playbook label, over the scam rows the system answered. A
-    # scam row answered `legit` is a miss with no playbook, and stays in.
-    # Rows that have not been annotated carry no gold playbook at all; a
-    # system that names none would then score a perfect 1.000 for agreeing
-    # with nothing, so a cell without a single gold playbook is not scored.
-    scam_rows = [
-        (r, p)
-        for r, p, label in zip(rows, predictions, y_pred, strict=True)
-        if r.label == "scam" and label != ABSTAIN_BAND
-    ]
-    if any(r.playbook_id for r, _ in scam_rows):
-        true_pb = [r.playbook_id or MISSING_PLAYBOOK for r, _ in scam_rows]
-        pred_pb = [p.playbook_id or MISSING_PLAYBOOK for _, p in scam_rows]
-        playbook = metrics.bootstrap_ci(true_pb, pred_pb, seed=seed, n_resamples=n_bootstrap)
-        extra["playbook_macro_f1"] = playbook.point
-        extra["playbook_ci95"] = [playbook.lo, playbook.hi]
-        extra["playbook_n"] = playbook.n
-        extra["playbook_f1"] = _defined(metrics.per_class_f1(true_pb, pred_pb))
-
-        stage = metrics.stage_accuracy(
-            true_pb, pred_pb, [r.stage for r, _ in scam_rows], [p.stage for _, p in scam_rows]
-        )
-        if stage.n_eligible:
-            extra["stage_accuracy"] = stage.accuracy
-            extra["stage_n_eligible"] = stage.n_eligible
-            extra["stage_n_correct"] = stage.n_correct
+    extra.update(_score_playbooks(rows, predictions, y_pred, seed=seed, n_bootstrap=n_bootstrap))
 
     n_errors = sum(1 for p in predictions if p.error)
     if n_errors:
         extra["n_errors"] = n_errors
 
     return CellScore(macro_f1=estimate, abstain_rate=abstain, fpr_hard_negative=fpr, extra=extra)
+
+
+def _score_playbooks(
+    rows: Sequence[DatasetRow],
+    predictions: Sequence[Prediction],
+    y_pred: Sequence[str],
+    *,
+    seed: int,
+    n_bootstrap: int,
+) -> dict[str, Any]:
+    """The playbook score of one cell, and the support behind it.
+
+    Over the scam rows the system answered; a scam row answered `legit` is a
+    miss with no playbook, and stays in. Rows that have not been annotated
+    carry no gold playbook at all, and a system that names none would then
+    score a perfect 1.000 for agreeing with nothing, so a slice in which no
+    row names a playbook is not scored.
+
+    Support is counted over every scam row of the slice, whatever the system
+    did with it, so all systems on one slice are held to the same playbooks.
+    A playbook with fewer than `playbook_rows` gold rows is not averaged.
+    Macro-F1 over the supported playbooks and top-1 accuracy over the rows
+    that name a playbook are both recorded; the leaderboard prints one of
+    them, by the number of supported playbooks.
+    """
+    floor = DEFAULT_FLOORS.playbook_rows
+    named = Counter(playbook_class(r.playbook_id) for r in rows if r.label == "scam")
+    named.pop(MISSING_PLAYBOOK, None)
+    if not named:
+        return {}
+    supported = sorted(c for c, k in named.items() if k >= floor)
+    out: dict[str, Any] = {
+        "playbook_floor": floor,
+        "playbook_n_by_class": dict(sorted(named.items())),
+        "playbook_supported": supported,
+    }
+    scam_rows = [
+        (r, p)
+        for r, p, label in zip(rows, predictions, y_pred, strict=True)
+        if r.label == "scam" and label != ABSTAIN_BAND
+    ]
+    if not scam_rows:
+        return out
+    true_pb = [playbook_class(r.playbook_id) for r, _ in scam_rows]
+    pred_pb = [playbook_class(p.playbook_id) for _, p in scam_rows]
+    groups = [group_of(r) for r, _ in scam_rows]
+    out["playbook_n"] = len(scam_rows)
+    out["playbook_f1"] = {
+        c: v
+        for c, v in _defined(metrics.per_class_f1(true_pb, pred_pb)).items()
+        if c != MISSING_PLAYBOOK
+    }
+    if any(t in supported for t in true_pb):
+        macro = metrics.bootstrap_ci(
+            true_pb,
+            pred_pb,
+            statistic=metrics.macro_f1_statistic(supported),
+            seed=seed,
+            n_resamples=n_bootstrap,
+            groups=groups,
+        )
+        out["playbook_macro_f1"] = macro.point
+        out["playbook_ci95"] = [macro.lo, macro.hi]
+    with_playbook = [
+        (t, p, g) for t, p, g in zip(true_pb, pred_pb, groups, strict=True) if t != MISSING_PLAYBOOK
+    ]
+    if with_playbook:
+        top1 = metrics.bootstrap_ci(
+            [t for t, _, _ in with_playbook],
+            [p for _, p, _ in with_playbook],
+            statistic=metrics.ACCURACY,
+            seed=seed,
+            n_resamples=n_bootstrap,
+            groups=[g for _, _, g in with_playbook],
+        )
+        out["playbook_accuracy"] = top1.point
+        out["playbook_accuracy_ci95"] = [top1.lo, top1.hi]
+        out["playbook_accuracy_n"] = top1.n
+
+    stage = metrics.stage_accuracy(
+        true_pb, pred_pb, [r.stage for r, _ in scam_rows], [p.stage for _, p in scam_rows]
+    )
+    if stage.n_eligible:
+        out["stage_accuracy"] = stage.accuracy
+        out["stage_n_eligible"] = stage.n_eligible
+        out["stage_n_correct"] = stage.n_correct
+    return out
 
 
 # ---------------------------------------------------------------------------

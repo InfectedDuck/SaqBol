@@ -17,6 +17,10 @@ leaderboard is where a number becomes a published one. `results.json` keeps
 every number the harness computed. The held-out tables also depend on the
 release tier of the run: under the floor for a pilot they print row counts
 and no number.
+
+The notes under the header describe the file they print, not the current
+code: a results file written before intervals took source groups into
+account is printed with the sentence that says its intervals resampled rows.
 """
 
 from __future__ import annotations
@@ -27,7 +31,15 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from saqbol.eval.results import ABLATIONS, LANGS, SPLITS, ResultRow, Results, read_results
+from saqbol.eval.results import (
+    ABLATIONS,
+    GROUPED_CI,
+    LANGS,
+    SPLITS,
+    ResultRow,
+    Results,
+    read_results,
+)
 from saqbol.eval.support import (
     DEFAULT_FLOORS,
     TEST_SPLITS,
@@ -36,6 +48,7 @@ from saqbol.eval.support import (
     Release,
     f1_gap,
     fpr_gap,
+    playbook_gap,
     release_tier,
     slice_gap,
 )
@@ -75,12 +88,36 @@ EXACT_NOTE = (
     "the bracket is the exact one-sided 95 percent binomial bound instead: with none of "
     "`n` flagged, the rate is at most the upper figure."
 )
+#: The same, for a file whose bound counts source groups as its trials.
+EXACT_NOTE_GROUPED = (
+    f"A hard-negative FPR marked `{EXACT_MARK}` comes from a cell where no hard negative was "
+    "flagged, or every one was. Resampling such a cell gives an interval with no width, so "
+    "the bracket is the exact one-sided 95 percent binomial bound instead, with each source "
+    "group of hard negatives counted as one trial: with none flagged, the rate is at most the "
+    "upper figure."
+)
+
+#: Marks a playbook figure that is top-1 accuracy, not macro-F1.
+ACCURACY_MARK = "acc"
 
 #: Printed in place of a number the cell has too little data for.
 NOT_REPORTED = "not reported"
 
 
-def support_note(floors: Floors) -> str:
+#: How the intervals of a file were drawn, by what it records.
+GROUPED_NOTE = (
+    "Each interval is the wider of two: one resampling rows, and one resampling whole source "
+    "groups among the groups that hold the same gold labels. The first is too narrow when the "
+    "rows of one article agree with each other, the second when there are few articles, so the "
+    "wider bounds are printed."
+)
+ROW_NOTE = (
+    "The intervals resample rows, not groups, and are narrower than that evidence warrants "
+    "wherever the two figures differ."
+)
+
+
+def support_note(floors: Floors, *, grouped: bool = False) -> str:
     """The two paragraphs that explain `not reported` and the bracketed count."""
     return (
         f"`{NOT_REPORTED}` marks a number with too little data behind it. A slice of fewer than "
@@ -92,8 +129,18 @@ def support_note(floors: Floors) -> str:
         "`rows (source groups)` is the number of rows in the cell and, in brackets, the number "
         "of source groups they come from. Rows that share an article, a translation pair or "
         "near-identical text are one group, so the bracketed figure is the better guide to how "
-        "much independent evidence the cell holds. The intervals resample rows, not groups, "
-        "and are narrower than that evidence warrants wherever the two figures differ."
+        "much independent evidence the cell holds. " + (GROUPED_NOTE if grouped else ROW_NOTE)
+    )
+
+
+def playbook_note(floors: Floors) -> str:
+    """How the playbook column is computed and which figure it prints."""
+    return (
+        "The playbook score is over the scam rows the system answered. It is macro-F1 over the "
+        f"playbooks with at least {floors.playbook_rows} gold rows in the slice when there are "
+        f"at least {floors.playbooks_for_macro} of them, and otherwise `{ACCURACY_MARK}`: top-1 "
+        "accuracy over the rows whose gold label names a playbook. A scam that fits no playbook "
+        "and a system that names none give the same answer, and that class is never averaged."
     )
 
 
@@ -106,7 +153,7 @@ _COLUMNS = (
     "macro-F1 [95% CI]",
     "hard-neg FPR [95% CI]",
     "coverage",
-    "playbook macro-F1 [95% CI]",
+    "playbook [95% CI]",
     "stage acc. (correct/eligible)",
 )
 
@@ -149,6 +196,20 @@ def _f1_reported(row: ResultRow, floors: Floors, withhold: bool) -> bool:
     return f1_gap(_extra(row, "n_by_label"), floors) is None
 
 
+def _playbook_cell(row: ResultRow, floors: Floors) -> str:
+    """Macro-F1 over the supported playbooks, top-1 accuracy, or the reason for neither."""
+    n_by_class = _extra(row, "playbook_n_by_class")
+    if n_by_class is None and _extra(row, "playbook_macro_f1") is None:
+        return DASH
+    kind, gap = playbook_gap(n_by_class, _extra(row, "playbook_supported"), floors)
+    if gap:
+        return _withheld(gap)
+    if kind == "macro":
+        return _interval(_extra(row, "playbook_macro_f1"), _extra(row, "playbook_ci95"))
+    figure = _interval(_extra(row, "playbook_accuracy"), _extra(row, "playbook_accuracy_ci95"))
+    return figure if figure == DASH else f"{ACCURACY_MARK} {figure}"
+
+
 def _render_row(row: ResultRow, floors: Floors, *, withhold: bool) -> str:
     """One table line. `withhold` blanks every metric: the tier allows no test number."""
     n_rows = _n_rows(row)
@@ -186,7 +247,7 @@ def _render_row(row: ResultRow, floors: Floors, *, withhold: bool) -> str:
         f1_cell,
         fpr_cell,
         _fmt(coverage),
-        _interval(_extra(row, "playbook_macro_f1"), _extra(row, "playbook_ci95")),
+        _playbook_cell(row, floors),
         stage_cell,
     )
     return "| " + " | ".join(cells) + " |"
@@ -212,6 +273,41 @@ def _table(rows: Sequence[ResultRow], floors: Floors, *, withhold: bool) -> list
         rule,
         *(_render_row(r, floors, withhold=withhold) for r in sorted(rows, key=order)),
     ]
+
+
+def _playbook_support(rows: Sequence[ResultRow], floors: Floors) -> list[str]:
+    """Which playbooks each language slice of a split averages, and which it cannot."""
+    by_lang: dict[str, ResultRow] = {}
+    for row in rows:
+        if isinstance(_extra(row, "playbook_n_by_class"), Mapping):
+            by_lang.setdefault(row.lang, row)
+    if not by_lang:
+        return []
+    first = next(iter(by_lang.values()))
+    floor = _extra(first, "playbook_floor")
+    lines = [
+        "Gold scam rows per playbook in each slice. A playbook is averaged into the playbook "
+        f"score with at least {floor if isinstance(floor, int) else floors.playbook_rows}.",
+        "",
+    ]
+    for lang in sorted(by_lang, key=lambda v: _LANG_ORDER.index(v) if v in _LANG_ORDER else 99):
+        row = by_lang[lang]
+        counts = _extra(row, "playbook_n_by_class")
+        supported = _extra(row, "playbook_supported") or []
+        above = [f"`{c}` {n}" for c, n in counts.items() if c in supported]
+        below = [f"`{c}` {n}" for c, n in counts.items() if c not in supported]
+        parts = [f"averaged: {', '.join(above)}" if above else "none averaged"]
+        if below:
+            parts.append(f"under the floor: {', '.join(below)}")
+        lines.append(f"- `{lang}`: {'; '.join(parts)}")
+    return [*lines, ""]
+
+
+def _grouped(results: Results) -> bool:
+    """Did every interval in the file resample source groups?"""
+    return bool(results.rows) and all(
+        _extra(row, "ci_resampled") == GROUPED_CI for row in results.rows
+    )
 
 
 def _exact_mark_printed(results: Results, floors: Floors, withheld_splits: Sequence[str]) -> bool:
@@ -265,6 +361,7 @@ def render_leaderboard(
     paragraph under the header prints whichever ones were applied.
     """
     release = run_release(results, floors)
+    grouped = _grouped(results)
     pilot = " (pilot)" if release.tier == "pilot" else ""
     withheld_splits = TEST_SPLITS if release.tier == "none" else ()
     lines = [
@@ -278,16 +375,17 @@ def render_leaderboard(
         "",
         "Macro-F1 is over `scam` / `legit` on the rows the system answered; `coverage` is the "
         "share of rows it answered. The hard-negative FPR keeps abstentions in its denominator. "
-        "Playbook macro-F1 is over the scam rows the system answered, with a missing playbook "
-        "scored as its own class. A dash marks a metric the cell did not measure.",
+        "A dash marks a metric the cell did not measure.",
         "",
-        support_note(floors),
+        playbook_note(floors),
+        "",
+        support_note(floors, grouped=grouped),
         "",
         f"**Release tier: {release.tier}.** {release.reason}",
         "",
     ]
     if _exact_mark_printed(results, floors, withheld_splits):
-        lines += [EXACT_NOTE, ""]
+        lines += [EXACT_NOTE_GROUPED if grouped else EXACT_NOTE, ""]
     present = [s for s in SPLITS if any(r.split == s for r in results.rows)]
     if not present:
         lines += ["No cell of the matrix produced a result.", ""]
@@ -300,6 +398,8 @@ def render_leaderboard(
             lines += [WITHHELD_NOTE, ""]
         rows = [r for r in results.rows if r.split == split]
         lines += [*_table(rows, floors, withhold=withhold), ""]
+        if not withhold:
+            lines += _playbook_support(rows, floors)
     if skipped:
         lines += [
             "## Cells not run",

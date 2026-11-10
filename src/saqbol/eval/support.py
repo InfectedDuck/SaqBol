@@ -23,18 +23,22 @@ person's reading at the moment of collection and the thing the annotation
 exists to check. So the held-out press split earns a tier only when every
 one of its rows carries two readings, whatever its size.
 
-Three kinds of rule:
+Four kinds of rule:
 
 - a *slice* (one language of one split, or a whole split) prints no metric
   under `slice_rows` rows, and no macro-F1 with fewer than `class_rows` rows
   of either class;
 - the hard-negative false-positive rate needs `hard_negatives` hard negatives;
+- a *playbook* is averaged into the playbook score only with `playbook_rows`
+  gold rows in the slice. With fewer than `playbooks_for_macro` such
+  playbooks the score is top-1 accuracy over the rows that name a playbook,
+  which is a slice like any other and needs `slice_rows` of them;
 - the *release tier* of the held-out press split decides whether any test
   number is printed at all.
 
-The per-playbook floor of the same section (ten rows per playbook, top-1
-accuracy when fewer than five playbooks are supported) belongs to the task
-that reports playbook scores on annotated rows, and is not applied here.
+The playbook floor is the one rule the harness applies as well, because it
+decides which classes the playbook macro-F1 averages over, and an interval
+cannot be recomputed after the fact. The harness records the floor it used.
 """
 
 from __future__ import annotations
@@ -61,6 +65,8 @@ class Floors:
     slice_rows: int = 30
     class_rows: int = 10
     hard_negatives: int = 30
+    playbook_rows: int = 10
+    playbooks_for_macro: int = 5
     pilot_rows: int = 60
     pilot_legit: int = 20
     benchmark_rows: int = 200
@@ -139,6 +145,25 @@ def fpr_gap(n_hard_negative: Any, floors: Floors = DEFAULT_FLOORS) -> str | None
     if n < floors.hard_negatives:
         return f"{n} hard negative{'' if n == 1 else 's'}"
     return None
+
+
+def playbook_gap(
+    n_by_class: Any, supported: Any, floors: Floors = DEFAULT_FLOORS
+) -> tuple[str, str | None]:
+    """Which playbook figure a slice prints, and why not when it prints none.
+
+    Returns `("macro", None)` when enough playbooks clear the floor for the
+    macro-F1, `("accuracy", None)` when the rows that name a playbook are
+    enough for top-1 accuracy instead, and `(kind, reason)` when neither is.
+    """
+    if not isinstance(n_by_class, Mapping) or not isinstance(supported, list):
+        return "macro", "playbook support not recorded"
+    if len(supported) >= floors.playbooks_for_macro:
+        return "macro", None
+    named = sum(v for v in (_count(x) for x in n_by_class.values()) if v is not None)
+    if named < floors.slice_rows:
+        return "accuracy", f"{named} rows name a playbook"
+    return "accuracy", None
 
 
 @dataclass(frozen=True)

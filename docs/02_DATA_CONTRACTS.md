@@ -461,9 +461,15 @@ The harness writes more than the fields above, and a reader keeps keys it does n
 | Row | `n_by_label` | Rows in the cell per gold label |
 | Row | `n_hard_negative` | Hard negatives in the cell; absent when there are none |
 | Row | `n_source_groups` | Distinct `source_group` values in the cell; absent unless every row names its group |
+| Row | `ci_resampled` | `rows and source groups`: every interval of the row is the wider of a row interval and a source-group interval. Absent from files written before 11 November 2026, whose intervals resampled rows only |
+| Row | `ci95_rows`, `ci95_groups`, `ci_n_groups` | The two intervals `ci95` is the envelope of, and the number of groups behind the second. A row that names no group is a group of one |
+| Row | `fpr_hard_negative_n_groups` | Source groups among the hard negatives; the exact bound counts them as its trials |
+| Row | `playbook_floor`, `playbook_n_by_class`, `playbook_supported` | Gold scam rows per playbook in the slice, and the playbooks with at least `playbook_floor` of them. Absent when no row of the slice names a playbook |
+| Row | `playbook_macro_f1`, `playbook_ci95` | Macro-F1 averaged over the supported playbooks |
+| Row | `playbook_accuracy`, `playbook_accuracy_ci95`, `playbook_accuracy_n` | Top-1 accuracy over the answered scam rows whose gold label names a playbook |
 | Top level | `split_support` | Per split that was read: `n_rows`, `by_label`, `by_lang`, `n_hard_negative`, `n_source_groups` |
 | Top level | `limit` | The `--limit` the run was given; absent on a full run |
 
-`results.json` holds every number the harness computed. The leaderboard applies the minimum-support rules of [15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) section 7 to these counts: a number under its floor prints as `not reported`, and the size of `test_press` sets the release tier (`none`, `pilot` or `benchmark`) printed in the header. A count that is missing is treated as a count that is too small.
+`results.json` holds every number the harness computed. The leaderboard applies the minimum-support rules of [15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) section 7 to these counts: a number under its floor prints as `not reported`, and the size of `test_press` sets the release tier (`none`, `pilot` or `benchmark`) printed in the header. A count that is missing is treated as a count that is too small. The playbook score and the interval rule are defined in [05_EVAL_PROTOCOL.md](05_EVAL_PROTOCOL.md) section 5; a gold `other_scam` and a scam row with no script are scored as one class, `none`.
 
 State in the README: no "X beats Y" claim without non-overlapping confidence intervals.
