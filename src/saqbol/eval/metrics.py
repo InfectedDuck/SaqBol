@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import numpy as np
@@ -530,6 +530,9 @@ class Estimate:
     n_resamples: int
     seed: int
     alpha: float = DEFAULT_ALPHA
+    #: "bootstrap", or "exact_binomial" where a bootstrap interval would have
+    #: had no width and the bound was computed in closed form instead.
+    method: str = "bootstrap"
 
     @property
     def ci(self) -> CI:
@@ -625,6 +628,28 @@ def bootstrap_ci(
     )
 
 
+def exact_binomial_bound(successes: int, n: int, *, alpha: float = DEFAULT_ALPHA) -> CI:
+    """One-sided exact bound on a proportion observed as none, or as all, of `n`.
+
+    Resampling rows that all gave the same answer returns that answer every
+    time, so the percentile bootstrap reports 0 of 17 as [0.000, 0.000]: a
+    claim of certainty from seventeen rows. The honest statement is the
+    largest rate that would still produce no events in `n` trials with
+    probability `alpha`, which is `1 - alpha ** (1 / n)`. For 0 of 17 that is
+    0.162; for 0 of 30, 0.095. The mirror image holds when every trial was an
+    event.
+    """
+    if n <= 0:
+        raise ValueError("a bound needs at least one trial")
+    if successes not in (0, n):
+        raise ValueError(
+            f"the closed-form bound is for 0 or {n} events out of {n}, got {successes}; "
+            "use the bootstrap interval"
+        )
+    edge = alpha ** (1.0 / n)
+    return (0.0, 1.0 - edge) if successes == 0 else (edge, 1.0)
+
+
 def hard_negative_fpr_ci(
     y_true: Sequence[str],
     y_pred: Sequence[str],
@@ -641,6 +666,10 @@ def hard_negative_fpr_ci(
     uninstall, so it ships with an interval like everything else. Resampling is
     over the hard negatives only, which are all legitimate by definition, so
     there is no class left to stratify by.
+
+    When no hard negative was flagged, or every one was, the bootstrap has
+    nothing to vary and the interval is the exact one-sided binomial bound
+    instead; `method` on the returned estimate says which was used.
     """
     _check_arrays(y_true, y_pred, hard_negative)
     # Validate the subset before resampling it, so a hard negative labelled
@@ -650,15 +679,21 @@ def hard_negative_fpr_ci(
     subset_pred = [p for p, flag in zip(y_pred, hard_negative, strict=True) if flag]
     if not subset_true:
         raise ValueError("no rows are flagged hard_negative")
-    return bootstrap_ci(
+    positive = set(positive_labels)
+    estimate = bootstrap_ci(
         subset_true,
         subset_pred,
-        statistic=predicted_rate_statistic(positive_labels),
+        statistic=predicted_rate_statistic(positive),
         seed=seed,
         n_resamples=n_resamples,
         alpha=alpha,
         strata=["hard_negative"] * len(subset_true),
     )
+    flagged = sum(1 for p in subset_pred if p in positive)
+    if flagged not in (0, len(subset_pred)):
+        return estimate
+    lo, hi = exact_binomial_bound(flagged, len(subset_pred), alpha=alpha)
+    return replace(estimate, lo=lo, hi=hi, method="exact_binomial")
 
 
 # ---------------------------------------------------------------------------

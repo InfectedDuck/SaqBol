@@ -227,6 +227,15 @@ async def analyze(
     )
 
 
-def rules_only_analyzer(playbooks: dict[str, Playbook] | None = None) -> Analyzer:
-    """The `rules_only` leaderboard row: no retrieval, no model, no network."""
-    return Analyzer(playbooks=playbooks or {}, retriever=NullRetriever(), client=None)
+def rules_only_analyzer(
+    playbooks: dict[str, Playbook] | None = None, *, thresholds: Thresholds | None = None
+) -> Analyzer:
+    """The `rules_only` leaderboard row: no retrieval, no model, no network.
+
+    `thresholds` is for the calibration search, which confirms its choice by
+    running this pipeline with it. Everything else uses the defaults.
+    """
+    config = AnalyzerConfig() if thresholds is None else AnalyzerConfig(thresholds=thresholds)
+    return Analyzer(
+        playbooks=playbooks or {}, retriever=NullRetriever(), client=None, config=config
+    )

@@ -35,7 +35,7 @@ from saqbol.eval.metrics import Estimate
 
 System = Literal["rules_only", "llm_zeroshot", "hybrid"]
 Ablation = Literal["none", "translated", "cue_masked", "no_playbook_context"]
-Split = Literal["train_synthetic", "calibration", "test_press", "test_donated"]
+Split = Literal["train_synthetic", "dev", "calibration", "test_press", "test_donated"]
 
 SYSTEMS: tuple[System, ...] = get_args(System)
 ABLATIONS: tuple[Ablation, ...] = get_args(Ablation)

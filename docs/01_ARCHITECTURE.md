@@ -97,15 +97,15 @@ Two corrections the implementation made to this draft, both in `fuse.py`:
 
 **Absent components are dropped and the weights renormalised.** The `rules_only` baseline runs with no retrieval and no model. With a fixed divisor its risk would cap at 0.45 and it could never reach the scam band, making the baseline unbeatable by construction and the comparison meaningless.
 
-Banding (initial values, retuned on the calibration split in T512):
+Banding. The `suspicious` threshold was put to the calibration fit on 11 November 2026 and kept ([protocol section 7](05_EVAL_PROTOCOL.md)); the abstention thresholds are initial values until a model system is calibrated:
 
 | Condition | Band |
 |---|---|
 | `disagreement > 0.40` | `unsure` (override) |
 | `self_consistency_agreement < 0.60` | `unsure` (override) |
 | `risk >= 0.70` | `scam` |
-| `0.45 <= risk < 0.70` | `suspicious` |
-| `risk < 0.45` | `likely_safe` |
+| `0.40 <= risk < 0.70` | `suspicious` |
+| `risk < 0.40` | `likely_safe` |
 
 The override rule is the abstention mechanism. It fires when the rules and the model disagree, which is exactly the case where a single-signal system silently fails. Report coverage and risk-at-coverage, not just accuracy.
 
@@ -225,6 +225,8 @@ saqbol/
 ---
 
 ## 6. Deployment
+
+> Sections 6 and 7 describe the deployment and budget planned in September 2026. The current plan uses free hosting tiers and a budget close to zero: see [the roadmap's budget section](10_REMAINING_ROADMAP.md#budget). The container layout below is still what `docker compose up` builds.
 
 Single box, three containers, `docker compose up`.
 

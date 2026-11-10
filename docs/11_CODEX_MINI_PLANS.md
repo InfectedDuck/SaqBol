@@ -1,10 +1,12 @@
 # SaqBol — Codex mini-plans
 
-Use with [the remaining roadmap](10_REMAINING_ROADMAP.md). Updated 15 September 2026. Tasks are proposals; none is marked complete merely because this file exists.
+Use with [the remaining roadmap](10_REMAINING_ROADMAP.md). Written 15 September 2026; states, order and budget notes revised 11 November 2026. Tasks are proposals; none is marked complete merely because this file exists.
+
+The mini-plans keep their numbers but no longer run in number order. The current order is P16, P05, P11, then P07 and P08 side by side, P09, P10, P12, P13, P14, with P15 ongoing. The roadmap explains why the freeze (P11) now comes before collection (P09). Every step has a route that costs nothing; see the roadmap's budget section before any step that could spend money.
 
 ## Model selection
 
-The following assignments are project-specific recommendations based on the [official Codex model guidance](https://learn.chatgpt.com/docs/models), checked September 15. Terra fits everyday implementation; Sol fits complex changes and reviews; Luna fits precise repetitive work; Astra fits the hardest end-to-end reasoning. Start with the lowest effort that passes the task's checks. Model access and effort options depend on your account/client.
+The following assignments are project-specific recommendations based on the [official Codex model guidance](https://learn.chatgpt.com/docs/models), checked September 15 and not re-checked since. Any capable coding assistant can run a mini-plan; the model names are a guide to how hard each task is, not a requirement. Terra fits everyday implementation; Sol fits complex changes and reviews; Luna fits precise repetitive work; Astra fits the hardest end-to-end reasoning. Start with the lowest effort that passes the task's checks. Model access and effort options depend on your account/client.
 
 | Preferred model | Suggested effort | Use here |
 |---|---|---|
@@ -57,7 +59,7 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P03 — Finish the existing UI and translation patch
 
-**Model:** Terra / medium; native speakers review language/advice. **Depends:** P01. **Size:** 2–3 hours. **State:** pending P01.
+**Model:** Terra / medium; native speakers review language/advice. **Depends:** P01. **Size:** 2–3 hours. **State:** engineering done (form and screenshot regression tests and the sample-page smoke test run in CI); blocked: native-speaker review of the Kazakh and Chinese text, which is not recorded anywhere yet.
 
 **Read:** existing diffs, `web/README.md`, `web/tests`, `api/schemas.py`, playbook schema and changed YAML/locales.
 
@@ -80,7 +82,9 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P05 — Validate providers and capture offline replays
 
-**Model:** Terra / medium; Sol / high for persistent provider/schema failures. **Depends:** P01 and provider access from P02. **Size:** two 1–2 hour sessions. **State:** access unverified.
+**Model:** Terra / medium; Sol / high for persistent provider/schema failures. **Depends:** P01 and provider access from P02. **Size:** two 1–2 hour sessions. **State:** blocked: one provider key. No live model call has been made.
+
+**Budget note (11 November 2026):** start with one or two low-cost providers and whatever sign-up credit or free tier they offer; the other models in the matrix wait. Do a 20-row dry run first, read the usage page, and extrapolate before any larger run. The owner sets the cap; record what was actually charged.
 
 **Read:** `core/llm.py`, `core/perceive.py`, `test_llm.py`, `test_perceive.py`, `08_REFUSAL_PROBE.md`, `eval/probes/README.md`.
 
@@ -91,7 +95,7 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P06 — Audit corpus and design a clean holdout
 
-**Model:** Sol / high; Astra / high only if a design conflict remains unresolved. **Depends:** P01; reviewer coordination via P02. **Size:** 1–2 hours. **State:** pending P01.
+**Model:** Sol / high; Astra / high only if a design conflict remains unresolved. **Depends:** P01; reviewer coordination via P02. **Size:** 1–2 hours. **State:** done 11 November 2026 — see [P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md). The policy is in force with the defaults that need no money and no second person: collect after the freeze, no separate data steward. The tooling that enforces it is P16.
 
 **Read:** `DESIGN_DECISIONS.md` section 4, `05_EVAL_PROTOCOL.md`, `09_SOURCES.md`, split builder/tests, corpus metadata and manifest.
 
@@ -103,7 +107,9 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P07 — Run a real annotation pilot
 
-**Model:** Terra / medium for tool/export repairs; Sol / high for agreement design. **Depends:** P06 and human annotators. **Size:** two 1–2 hour engineering sessions plus annotation. **State:** annotator availability unverified.
+**Model:** Terra / medium for tool/export repairs; Sol / high for agreement design. **Depends:** P06 and human annotators. **Size:** two 1–2 hour engineering sessions plus annotation. **State:** engineering half done on 11 November 2026 ([record](17_P07_PILOT_PREPARATION_2026-11-11.md)); labelling is blocked on two co-annotators, and the live check of the page's storage on a working connection to its database.
+
+**Fallback (11 November 2026):** with no co-annotators, the owner labels the pilot twice, at least two weeks apart and blind to the first pass. That measures intra-annotator agreement only and is reported as such.
 
 **Read:** `tools/annotate.html`, `data/pilot`, `07_ANNOTATION_GUIDELINE.md`, T402/T406 history.
 
@@ -113,9 +119,13 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 **Done:** reproducible pilot exports, agreement report and guideline revision. AI suggestions are not counted as independent human annotations.
 
+**Prepared, 11 November 2026.** `tools/pilot.py draw` wrote `data/pilot/batch-pilot-02.json`: 30 `dev` messages (20 scam, 10 legitimate; 19 Russian, 11 Kazakh) from 26 source groups, with a key file beside it. Items carry no source and no channel, because in `dev` either one gives the label away. `tools/pilot.py agreement` turns the page's export into the agreement report and the disagreement list. The page's admin tab lets every annotator download everyone's labels, so independence is a rule the three are asked to keep and is reported as such. No label exists yet.
+
 ### P08 — Deploy a small pilot and test reachability
 
-**Model:** Sol / high. **Depends:** P03, P04, host/token from P02; P05 for hybrid/screenshots. **Size:** 2–3 hours plus external testing. **State:** infrastructure unverified.
+**Model:** Sol / high. **Depends:** P03, P04, host/token from P02; P05 for hybrid/screenshots. **Size:** 2–3 hours plus external testing. **State:** blocked: a host and a bot token.
+
+**Budget note (11 November 2026):** use free hosting tiers. The bot needs no public address. The API can run on its in-memory store for a demonstration, in which case the page says nothing is kept and donations are switched off; storing anything a user sends needs a database and the P04 retention job first. Buy a domain only if the mainland-network test fails on the host's own subdomain.
 
 **Read:** P04 runbook, `01_ARCHITECTURE.md`, API/bot configuration, `06_DAY0_CHECKLIST.md` section E.
 
@@ -127,7 +137,7 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P09 — Collect and double-annotate in batches
 
-**Model:** Luna / low for structured metadata checks; Terra / medium for tooling fixes. **Depends:** P07. **Size:** 30–60 minutes engineering per batch, plus human collection/review. **State:** pending pilot.
+**Model:** Luna / low for structured metadata checks; Terra / medium for tooling fixes. **Depends:** P07 and the `system-freeze-v0.1` tag from P11. **Size:** 30–60 minutes engineering per batch, plus human collection/review. **State:** blocked: the freeze tag. A row collected before the tag is development data, so collection for the test set does not start early.
 
 **Read:** P06 policy, revised annotation guideline, `tools/collect.py`, `tools/scrub_corpus.py`, source inventory.
 
@@ -139,7 +149,7 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P10 — Freeze final splits
 
-**Model:** Sol / high. **Depends:** P09. **Size:** 1–2 hours. **State:** pending annotation.
+**Model:** Sol / high. **Depends:** P09. **Size:** 1–2 hours. **State:** blocked: annotated fresh rows. The builder already follows the policy (P16); what remains is the final build from adjudicated labels.
 
 **Read:** split builder/tests, P06 policy, adjudicated metadata, `02_DATA_CONTRACTS.md`, datasheet.
 
@@ -151,19 +161,25 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P11 — Calibrate, then freeze the system
 
-**Model:** Sol / high. **Depends:** P05, P10. **Size:** 2–3 hours. **State:** pending clean data/provider validation.
+**Model:** Sol / high. **Depends:** P16; P05 for the model systems. **Size:** 2–3 hours. **State:** rules-only fit done on 11 November 2026; the hybrid fit is blocked on a provider key; the tag `system-freeze-v0.1` is not created and waits for the owner.
+
+**Reordered 11 November 2026.** This step now runs before collection. The fresh pool will almost certainly hold fewer than 250 rows, so thresholds are fitted on `dev` (`eval/configs/dev.yaml`) and the run is labelled `dev-calibrated`. The tag `system-freeze-v0.1` pins rules, lexicons, prompts, playbooks, thresholds and model identifiers, and collection for the test set starts the day after. If the fresh pool does reach 250 rows, the calibration slice the builder cuts is used to refit thresholds only, by the procedure fixed at the tag.
 
 **Read:** `core/fuse.py`, `eval/systems.py`, `eval/config.py`, calibration protocol and P10 manifest.
 
-1. Define an explicit calibration objective including false positives and coverage. Fit weights/thresholds only on calibration rows; use development data for prompt/rule changes.
+1. Define an explicit calibration objective including false positives and coverage. Fit weights/thresholds only on calibration data (`dev` in the `dev-calibrated` regime, the fresh slice otherwise); never on a test split.
 2. Save chosen parameters, candidate search, calibration results, model IDs, prompts, playbook version, code revision and run seed. Confirm evaluation uses the selected parameters.
 3. Freeze the configuration before running final test cells. If tuning requires more data, revisit allocation without inspecting the held-out results.
 
 **Done:** reproducible calibration artifact and frozen configuration; final test data has not influenced tuning. This deliberately precedes P12, correcting the old backlog's ambiguous order.
 
+**Result for the rules-only system, 11 November 2026.** `python -m saqbol.eval calibrate --config eval/configs/dev.yaml` writes `eval/calibration/rules_only.json`. Only the `suspicious` threshold can be fitted without a model. The objective is macro-F1 subject to at most 5% of hard negatives flagged, coverage of at least 0.80, and no broken case in the regression suite; the current value is replaced only when the interval of the paired gain over source groups lies above zero. The best candidate was 0.37 (+0.062 macro-F1, five more scam rows from two articles, interval 0.000 to 0.111), so the threshold stays at 0.40. The procedure and the table are in [05_EVAL_PROTOCOL.md](05_EVAL_PROTOCOL.md) section 7. Open before the tag: the owner confirms the 5% cap, the 0.80 floor and the incumbent rule, or changes them; the hybrid system is fitted if a provider key arrives, or is declared out of the frozen set.
+
 ### P12 — Run the benchmark and inspect completeness
 
-**Model:** Sol / high. **Depends:** P11. **Size:** two 1–2 hour sessions plus bounded provider runtime. **State:** pending system freeze.
+**Model:** Sol / high. **Depends:** P10, P11. **Size:** two 1–2 hour sessions plus bounded provider runtime. **State:** blocked: final splits.
+
+**Budget note (11 November 2026):** two verified models are the whole required matrix. The response cache makes reruns free, so the cost is one pass. Publish at the tier the row count supports (roadmap, research gate).
 
 **Read:** `eval/configs/v0.1.yaml`, eval run/results/leaderboard modules, metrics tests and protocol.
 
@@ -208,3 +224,17 @@ Do not stage unrelated work or publish/send anything as part of this task.
 3. Draft outreach and awareness-session materials from real artifacts, and maintain an evidence index for press/reviewer/session links supplied later.
 
 **Done per review:** dated usage snapshot, feedback backlog and evidence index. Sending outreach requires a separate explicit instruction; 300 users and press coverage remain aspirations until observed.
+
+### P16 — Put the holdout policy into the tooling
+
+**Model:** Sol / high for the builder and metrics; Terra / medium for the collector. **Depends:** P06. **Size:** two 1–2 hour sessions. **State:** done 11 November 2026. Added 11 November 2026; it gathers the tooling changes the [P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) listed against P09, P10 and P12, because all of them must exist before the freeze.
+
+**Read:** the P06 record, `02_DATA_CONTRACTS.md` section 6, `eval/splits.py`, `eval/leaderboard.py`, `eval/metrics.py`, `eval/support.py`, `tools/collect.py` and their tests.
+
+1. **Done 11 November 2026.** Contract section 6 gains the `dev` split, the source-group rule and the calibration rule. The split builder joins rows from one article, sends every row in `data/exposure.json` to `dev` with its group and its article, cuts calibration only from 250 or more fresh rows, and records the regime in the manifest. `eval/configs/dev.yaml` runs development numbers, and the leaderboard marks a `dev` or calibration table as not a test result. Leakage tests over the released files fail the build on an exposed row or a divided article.
+2. **Done 11 November 2026.** `tools/collect.py` compares each new row with every `dev` row and fragment. A row from an article already in `dev`, or sharing a pair or variant key with a `dev` row, is marked as development data; a duplicate is refused; a similarity between 0.50 and 0.85 is held back until the collector rules `variant` (the row joins the exposure register) or `distinct`. Without the freeze tag a new batch is accepted only with `--dev`. `collect.py check` fails on a batch outside the register that predates the tag and on a lookalike with no ruling.
+3. **Done 11 November 2026.** The exact one-sided binomial bound replaces the bootstrap interval when a hard-negative false-positive count is zero or equals the total, and the leaderboard marks it. Every released row names its `source_group`, and the leaderboard prints the number of groups beside every row count. The floors of the P06 record's section 7 are in `eval/support.py`: a slice under 30 rows prints no metric, macro-F1 needs 10 rows of each class, the false-positive rate needs 30 hard negatives, and a number under its floor prints as "not reported" with the count that fell short. The release tier (none, pilot, benchmark) is computed from `test_press` and printed in the header; at tier none the held-out tables print row counts and no number, and a partial run (`--limit`) has no tier. `results.json` still holds every number the harness computed.
+
+Left for P12, which is the first task to score annotated playbook labels: the per-playbook floor (10 rows per playbook; top-1 accuracy when fewer than five playbooks are supported) and the 50-rows-per-language condition on the H1 comparison. The intervals still resample rows, not source groups; the leaderboard says so, and a grouped bootstrap is a P12 decision.
+
+**Done:** a fresh batch cannot enter a test split if it repeats, translates or shares an article with a development row; a table cannot be generated that presents development data, an unsupported slice or a zero-width interval as a test result. No row is collected as part of this mini-plan.

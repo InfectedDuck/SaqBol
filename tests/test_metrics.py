@@ -33,6 +33,7 @@ from saqbol.eval.metrics import (
     compare,
     confusion_matrix,
     coverage,
+    exact_binomial_bound,
     false_positive_rate,
     hard_negative_fpr,
     hard_negative_fpr_ci,
@@ -455,7 +456,49 @@ def test_a_positive_label_nobody_predicted_has_a_rate_of_zero():
     hard = [True] * 10
     result = hard_negative_fpr_ci(y_true, y_pred, hard, seed=1, n_resamples=200)
     assert result.point == pytest.approx(0.0)
-    assert result.ci == (0.0, 0.0)
+    # Ten clean rows do not prove a rate of zero: the interval is the exact
+    # bound, not the zero-width one the bootstrap would give.
+    assert result.method == "exact_binomial"
+    assert result.lo == 0.0
+    assert result.hi == pytest.approx(1 - 0.05 ** (1 / 10))
+
+
+@pytest.mark.parametrize(("n", "upper"), [(17, 0.162), (30, 0.095), (60, 0.049)])
+def test_the_exact_bound_for_no_events_matches_the_figures_in_the_holdout_policy(n, upper):
+    lo, hi = exact_binomial_bound(0, n)
+    assert lo == 0.0
+    assert hi == pytest.approx(upper, abs=0.0005)
+
+
+def test_the_exact_bound_mirrors_when_every_trial_was_an_event():
+    lo, hi = exact_binomial_bound(17, 17)
+    assert hi == 1.0
+    assert lo == pytest.approx(1 - 0.162, abs=0.0005)
+
+
+def test_the_exact_bound_refuses_a_count_the_bootstrap_can_handle():
+    with pytest.raises(ValueError, match="bootstrap"):
+        exact_binomial_bound(3, 17)
+    with pytest.raises(ValueError, match="at least one trial"):
+        exact_binomial_bound(0, 0)
+
+
+def test_every_hard_negative_flagged_gets_a_lower_bound_not_a_point():
+    y_true = ["legit"] * 12
+    y_pred = ["scam"] * 12
+    result = hard_negative_fpr_ci(y_true, y_pred, [True] * 12, seed=1, n_resamples=200)
+    assert result.method == "exact_binomial"
+    assert result.point == pytest.approx(1.0)
+    assert result.hi == 1.0
+    assert result.lo == pytest.approx(0.05 ** (1 / 12))
+
+
+def test_a_mixed_hard_negative_cell_keeps_its_bootstrap_interval():
+    y_true = ["legit"] * 40
+    y_pred = ["scam"] * 4 + ["legit"] * 36
+    result = hard_negative_fpr_ci(y_true, y_pred, [True] * 40, seed=42, n_resamples=500)
+    assert result.method == "bootstrap"
+    assert result.lo < result.point < result.hi
 
 
 def test_predicted_rate_statistic_counts_several_labels():

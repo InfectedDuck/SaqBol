@@ -2,17 +2,18 @@
 
 The first half exercises `saqbol.eval.splits` on small synthetic corpora in
 the `tools/collect.py` row shape: fragments are excluded, rows that must
-travel together do, donated rows are held out, calibration is capped and
-stratified, the same seed gives the same files, and every emitted row is one
-the harness's `DatasetRow` accepts.
+travel together do, exposed rows go to `dev` and take their group and their
+article with them, donated rows are held out, calibration follows the
+contract's rule or a capped manual size, the same seed gives the same files,
+and every emitted row is one the harness's `DatasetRow` accepts.
 
 The second half is the CI gate docs/05_EVAL_PROTOCOL.md section 8 asks for,
 run over whatever is actually in `data/kazscam_v0.1/`: no `text_sha256` in
 two splits, no synthetic row derived from a test row, calibration disjoint
-from every test split, and, one rule beyond the contract, no near-duplicate
-pair straddling two splits. These skip with a reason when the directory does
-not exist, so a checkout without built splits still passes, and fail the
-build the moment a leak is written.
+from every test split, no source article or near-duplicate pair straddling
+two splits, and no row from the exposure register outside `dev`. These skip
+with a reason when the directory does not exist, so a checkout without built
+splits still passes, and fail the build the moment a leak is written.
 """
 
 from __future__ import annotations
@@ -28,17 +29,24 @@ from saqbol.eval import splits
 from saqbol.eval.__main__ import main
 from saqbol.eval.run import DatasetRow, load_split
 from saqbol.eval.splits import (
+    CALIBRATION_MAX_ROWS,
+    CALIBRATION_MIN_POOL,
+    CALIBRATION_MIN_ROWS,
     NEAR_DUP_THRESHOLD,
     ROW_FIELDS,
     SPLIT_NAMES,
     CorpusError,
     assemble,
     build_splits,
+    exposed_corpus_ids,
     group_keys,
     group_rows,
+    load_exposure,
     normalize_text,
+    policy_calibration_size,
     read_split,
     similarity,
+    source_key,
     text_sha256,
     to_released_row,
 )
@@ -46,9 +54,11 @@ from saqbol.eval.splits import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SPLIT_DIR = REPO_ROOT / "data" / "kazscam_v0.1"
 CORPUS_DIR = REPO_ROOT / "data" / "corpus"
+EXPOSURE_FILE = REPO_ROOT / "data" / "exposure.json"
 COLLECT_PY = REPO_ROOT / "tools" / "collect.py"
 
 TEST_SPLITS = ("test_press", "test_donated")
+HELD_OUT_SPLITS = ("calibration", "test_press", "test_donated")
 SEEDS = (1, 2, 3, 20260908, 4242)
 
 
@@ -99,10 +109,16 @@ def corpus_row(
     return row
 
 
-def filler(n: int, *, prefix: str = "f", lang: str = "ru", label: str = "scam") -> list[dict]:
-    """`n` mutually dissimilar message rows, so the sampler has something to choose from."""
+def filler(
+    n: int, *, prefix: str = "f", lang: str = "ru", label: str = "scam", start: int = 0
+) -> list[dict]:
+    """`n` mutually dissimilar message rows, so the sampler has something to choose from.
+
+    The text depends only on the row's number, so two calls that must not
+    share a message need ranges that do not overlap: pass `start`.
+    """
     rows = []
-    for i in range(n):
+    for i in range(start, start + n):
         # Each text is a distinct sentence built from a distinct number so no
         # two share enough character shingles to count as near-duplicates.
         text = (
@@ -274,6 +290,158 @@ def test_groups_are_reported_with_their_reasons():
     assert report["by_reason"] == {"identical_text": 1, "near_duplicate": 1, "shared_key": 1}
 
 
+def test_source_key_treats_one_page_reached_two_ways_as_one_source():
+    page = "tengrinews.kz/news/moshenniki-123"
+    for url in (
+        "https://tengrinews.kz/news/moshenniki-123",
+        "http://www.tengrinews.kz/news/moshenniki-123/",
+        "HTTPS://Tengrinews.kz/news/moshenniki-123#comments",
+        "  https://tengrinews.kz/news/moshenniki-123  ",
+    ):
+        assert source_key(url) == page
+    assert source_key("https://tengrinews.kz/news/moshenniki-124") != page
+    assert source_key("") == ""
+    assert source_key(None) == ""
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_rows_quoted_from_one_article_never_split(seed):
+    article = [
+        corpus_row(
+            "ks-art-1",
+            "Ваш аккаунт взломан, срочно переведите средства на безопасный счёт.",
+            source_url="https://example.kz/article-9",
+        ),
+        corpus_row(
+            "ks-art-2",
+            "Сіздің атыңызға несие рәсімделді, растау үшін кодты айтыңыз.",
+            lang="kk",
+            source_url="http://www.example.kz/article-9/",
+        ),
+        corpus_row(
+            "ks-art-3",
+            "Информируем о плановых работах, приложение будет недоступно ночью.",
+            label="legit",
+            hard_negative=True,
+            source_url="https://example.kz/article-9#update",
+        ),
+    ]
+    rows = filler(20) + article
+    groups = {g.key: g for g in group_rows(sorted(rows, key=lambda r: r["id"]))}
+    assert groups["ks-art-1"].reasons == ("same_source",)
+    assert len(groups["ks-art-1"]) == 3
+    index = split_index(build_splits(rows, seed=seed, calibration_size=10))
+    assert where(index, "ks-art-1") == where(index, "ks-art-2") == where(index, "ks-art-3")
+
+
+# ---------------------------------------------------------------------------
+# Exposure
+# ---------------------------------------------------------------------------
+
+
+def _exposure_corpus() -> list[dict]:
+    """Twenty fresh rows, five that exposure touches, and one new article it must leave alone."""
+    return [
+        *filler(20),
+        corpus_row("ks-seen", "Назовите код из SMS, иначе счёт будет заблокирован навсегда."),
+        corpus_row(
+            "ks-seen-kk",
+            "SMS кодын айтыңыз, әйтпесе шотыңыз біржола бұғатталады.",
+            lang="kk",
+            notes="parallel pair key: seen-1",
+        ),
+        corpus_row("ks-seen-ru", "Пара к казахской строке.", notes="Parallel pair key: seen-1"),
+        corpus_row(
+            "ks-same-article",
+            "Новое сообщение из уже прочитанной статьи про выигрыш автомобиля.",
+            source_url="https://example.kz/ks-seen",
+        ),
+        corpus_row(
+            "ks-frag",
+            "безопасный счёт",
+            text_kind="phrase_fragment",
+            source_url="https://example.kz/read-for-its-phrases",
+        ),
+        corpus_row(
+            "ks-fragment-article",
+            "Сообщение из статьи, из которой раньше взяли только фразу для лексикона.",
+            source_url="https://www.example.kz/read-for-its-phrases/",
+        ),
+        corpus_row(
+            "ks-fresh",
+            "Совсем новая статья: курьер просит оплатить доставку по ссылке.",
+            source_url="https://example.kz/a-new-article",
+        ),
+    ]
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_exposed_rows_take_their_group_and_their_article_to_dev(seed):
+    rows = _exposure_corpus()
+    exposed = {"ks-seen", "ks-seen-kk", "ks-frag"}
+    build = assemble(rows, seed=seed, exposed_ids=exposed, calibration_size=8)
+    index = split_index(build.splits)
+    # The listed rows, the partner of a listed pair, a second quote from a
+    # listed row's article, and a message from an article a listed fragment
+    # was taken from.
+    for corpus_id in ("ks-seen", "ks-seen-kk", "ks-seen-ru", "ks-same-article"):
+        assert where(index, corpus_id) == "dev", corpus_id
+    assert where(index, "ks-fragment-article") == "dev"
+    assert "ks-frag" not in index
+    assert where(index, "ks-fresh") in {"calibration", "test_press"}
+    assert all(where(index, r["id"]) != "dev" for r in filler(20))
+
+    report = build.report["dev"]
+    assert report["exposed_rows"] == 2  # the fragment is exposed but is not a message
+    assert report["exposed_sources"] == 3
+    assert report["rows_pulled_in_by_group_or_source"] == [
+        "ks-fragment-article",
+        "ks-same-article",
+        "ks-seen-ru",
+    ]
+    assert build.report["splits"]["dev"]["n"] == 5
+    assert build.report["calibration"]["press_pool_rows"] == 21
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_no_exposed_row_reaches_a_held_out_split_under_any_seed(seed):
+    old = filler(30, prefix="old")
+    donated_old = corpus_row(
+        "ks-old-don", "Старый донат: код 9911, никому не сообщайте.", provenance="donated"
+    )
+    rows = [*old, donated_old, *filler(300, prefix="new", lang="kk", start=30)]
+    exposed = {r["id"] for r in old} | {"ks-old-don"}
+    result = build_splits(rows, seed=seed, exposed_ids=exposed)
+    assert {r["corpus_id"] for r in result["dev"]} == exposed
+    for name in HELD_OUT_SPLITS:
+        assert not ({r["corpus_id"] for r in result[name]} & exposed), name
+    # An exposed donated row is development data too, not a held-out donation.
+    assert result["test_donated"] == []
+    assert len(result["calibration"]) == 60
+
+
+def test_the_register_names_whole_batches_and_single_rows(tmp_path):
+    register = tmp_path / "exposure.json"
+    register.write_text(
+        json.dumps({"exposed_batches": ["press-01"], "exposed_ids": ["ks-x-2"], "log": []}),
+        encoding="utf-8",
+    )
+    rows = [
+        {"id": "ks-a-1", "batch": "press-01"},
+        {"id": "ks-a-2", "batch": "press-01"},
+        {"id": "ks-x-1", "batch": "press-09"},
+        {"id": "ks-x-2", "batch": "press-09"},
+    ]
+    assert exposed_corpus_ids(rows, load_exposure(register)) == {"ks-a-1", "ks-a-2", "ks-x-2"}
+
+    register.write_text(json.dumps({"exposed_batches": "press-01"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="exposed_batches must be a list of strings"):
+        load_exposure(register)
+    register.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="expected an object"):
+        load_exposure(register)
+
+
 # ---------------------------------------------------------------------------
 # Routing, capping, stratification, determinism
 # ---------------------------------------------------------------------------
@@ -342,6 +510,7 @@ def test_calibration_is_capped_at_the_pool_fraction_and_stratified():
     assert len(build.splits["test_press"]) == 60
     report = build.report["calibration"]
     assert report == {
+        "regime": "manual",
         "size_requested": 150,
         "max_fraction": 0.4,
         "press_pool_rows": 100,
@@ -367,6 +536,33 @@ def test_calibration_is_capped_at_the_pool_fraction_and_stratified():
     # Every row ends up somewhere, exactly once.
     ids = [r["corpus_id"] for s in small.splits.values() for r in s]
     assert sorted(ids) == sorted(r["id"] for r in rows)
+
+
+def test_the_contract_rule_cuts_calibration_only_from_a_pool_that_can_spare_it():
+    assert policy_calibration_size(0) == 0
+    assert policy_calibration_size(CALIBRATION_MIN_POOL - 1) == 0
+    assert policy_calibration_size(CALIBRATION_MIN_POOL) == CALIBRATION_MIN_ROWS
+    assert policy_calibration_size(300) == 60
+    assert policy_calibration_size(375) == CALIBRATION_MAX_ROWS
+    assert policy_calibration_size(5000) == CALIBRATION_MAX_ROWS
+
+    # Below the line: no calibration split, every fresh row is a test row.
+    small = assemble(filler(120), seed=3)
+    assert small.splits["calibration"] == []
+    assert len(small.splits["test_press"]) == 120
+    assert small.report["calibration"]["regime"] == "dev-calibrated"
+    assert small.report["calibration"]["size_requested"] == 0
+
+    # At or above it: a fifth of the pool, stratified, the rest is the test set.
+    rows = filler(200, prefix="r") + filler(100, prefix="k", lang="kk", label="legit", start=200)
+    large = assemble(rows, seed=3)
+    assert large.report["calibration"]["regime"] == "calibrated"
+    assert len(large.splits["calibration"]) == 60
+    assert len(large.splits["test_press"]) == 240
+    assert large.report["splits"]["calibration"]["by_label_lang"] == {
+        "legit/kk": 20,
+        "scam/ru": 40,
+    }
 
 
 def test_a_tiny_pool_yields_a_tiny_calibration_not_a_padded_one():
@@ -446,6 +642,8 @@ def test_every_emitted_row_has_the_contract_shape_and_loads_in_the_harness():
             assert row["annotator_b"] is None
             assert row["adjudicated"] is False
             assert row["text_sha256"] == text_sha256(row["text"])
+            # None of these rows has a relative, so each is its own group.
+            assert row["source_group"] == row["id"]
             assert row["collected_at"] == "2026-09-08"
             assert isinstance(row["scrub_applied"], list)
 
@@ -539,17 +737,66 @@ def test_the_cli_writes_one_jsonl_per_split_a_manifest_and_a_provisional_readme(
     assert "built_at" in manifest
     assert any("source_row_id" in note for note in manifest["notes"])
 
+    assert manifest["calibration"]["regime"] == "manual"
+    assert manifest["exposure_register"] is None
+
     readme = (out / "README.md").read_text(encoding="utf-8")
     first_line = readme.splitlines()[0]
     assert first_line.startswith("PROVISIONAL")
     assert "not annotated" in first_line
     assert "T407" in first_line
+    assert "asked for by hand" in readme
 
     # A rebuild with the same seed rewrites the JSONL files byte for byte.
     before = {name: (out / f"{name}.jsonl").read_bytes() for name in SPLIT_NAMES}
     assert main([*argv, "--calibration-size", "10"]) == 0
     after = {name: (out / f"{name}.jsonl").read_bytes() for name in SPLIT_NAMES}
     assert before == after
+
+
+def test_the_cli_reads_the_register_beside_the_corpus_and_sends_exposed_batches_to_dev(
+    tmp_path, capsys
+):
+    corpus = tmp_path / "data" / "corpus"
+    out = tmp_path / "kazscam"
+    rows = filler(30)  # batch "a" is the first fifteen, batch "b" the rest
+    _write_corpus(corpus, rows)
+    register = tmp_path / "data" / "exposure.json"
+    register.write_text(
+        json.dumps({"exposed_batches": ["a"], "exposed_ids": ["ks-f-029"]}), encoding="utf-8"
+    )
+
+    argv = ["splits", "--corpus", str(corpus), "--out", str(out), "--seed", "5"]
+    assert main(argv) == 0
+    printed = capsys.readouterr().out
+    assert "dev-calibrated" in printed
+    assert "dev=16" in printed
+    assert "calibration=0" in printed
+    assert "test_press=14" in printed
+
+    dev = {r["corpus_id"] for r in read_split(out / "dev.jsonl")}
+    assert dev == {r["id"] for r in rows[:15]} | {"ks-f-029"}
+    assert read_split(out / "calibration.jsonl") == []
+    assert all(isinstance(r, DatasetRow) for r in load_split(out / "dev.jsonl"))
+
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["calibration"]["regime"] == "dev-calibrated"
+    assert manifest["dev"]["exposed_rows"] == 16
+    assert manifest["exposure_register"].endswith("data/exposure.json")
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "No calibration split was cut" in readme
+
+    # A register named on the command line replaces the one beside the corpus.
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"exposed_batches": [], "exposed_ids": []}), encoding="utf-8")
+    assert main([*argv, "--exposure", str(other)]) == 0
+    assert read_split(out / "dev.jsonl") == []
+    assert len(read_split(out / "test_press.jsonl")) == 30
+    capsys.readouterr()
+
+    # One that is named but missing is an error, not an empty register.
+    assert main([*argv, "--exposure", str(tmp_path / "missing.json")]) == 2
+    assert "missing.json" in capsys.readouterr().err
 
 
 def test_the_cli_reports_a_missing_corpus_directory(tmp_path, capsys):
@@ -635,6 +882,86 @@ def test_no_near_duplicate_pair_straddles_two_splits(released):
 
 
 @needs_release
+def test_no_source_article_straddles_two_splits(released):
+    splits_of: dict[str, set[str]] = {}
+    for name, rows in released.items():
+        for row in rows:
+            key = source_key(row.get("source_url"))
+            if key:
+                splits_of.setdefault(key, set()).add(name)
+    torn = {key: sorted(names) for key, names in splits_of.items() if len(names) > 1}
+    assert not torn, f"source articles spanning splits: {torn}"
+
+
+@needs_release
+@pytest.mark.skipif(not CORPUS_DIR.is_dir(), reason="data/corpus is not in this checkout")
+@pytest.mark.skipif(
+    not EXPOSURE_FILE.is_file(), reason="data/exposure.json is not in this checkout"
+)
+def test_no_exposed_row_or_exposed_article_is_in_a_held_out_split(released):
+    corpus = splits.load_corpus(CORPUS_DIR)
+    exposed = exposed_corpus_ids(corpus, load_exposure(EXPOSURE_FILE))
+    exposed_sources = {source_key(r.get("source_url")) for r in corpus if r["id"] in exposed}
+    exposed_sources.discard("")
+    for name in HELD_OUT_SPLITS:
+        leaked = [r["corpus_id"] for r in released[name] if r["corpus_id"] in exposed]
+        assert not leaked, f"exposed rows in {name}: {leaked[:5]}"
+        same_article = [
+            r["corpus_id"]
+            for r in released[name]
+            if source_key(r.get("source_url")) in exposed_sources
+        ]
+        assert not same_article, f"rows in {name} from an exposed article: {same_article[:5]}"
+    in_dev = {r["corpus_id"] for r in released["dev"]}
+    messages = {r["id"] for r in corpus if r.get("text_kind", "message") == "message"}
+    assert (exposed & messages) <= in_dev, "an exposed message is missing from dev"
+
+
+def test_rows_that_travel_together_name_the_same_source_group():
+    pair = "parallel pair key: kaspi-code"
+    rows = [
+        corpus_row("ks-a-ru", "Назовите код из SMS, это служба безопасности банка.", notes=pair),
+        corpus_row(
+            "ks-b-kk", "SMS кодын айтыңыз, бұл банк қауіпсіздік қызметі.", lang="kk", notes=pair
+        ),
+        corpus_row("ks-c", "Ваша посылка задержана на таможне, оплатите пошлину по ссылке."),
+        *filler(4),
+    ]
+    build = splits.assemble(rows, seed=5)
+    by_corpus = {r["corpus_id"]: r for s in build.splits.values() for r in s}
+
+    # The group is named after its first row, in corpus-id order.
+    assert by_corpus["ks-a-ru"]["source_group"] == by_corpus["ks-a-ru"]["id"]
+    assert by_corpus["ks-b-kk"]["source_group"] == by_corpus["ks-a-ru"]["id"]
+    assert by_corpus["ks-c"]["source_group"] == by_corpus["ks-c"]["id"]
+    assert len({r["source_group"] for r in by_corpus.values()}) == 6
+
+    # A group is never divided, so its name is an id in the row's own split,
+    # and the manifest counts the groups of each split.
+    for name, split in build.splits.items():
+        ids = {r["id"] for r in split}
+        assert all(r["source_group"] in ids for r in split), name
+        tally = build.report["splits"][name]
+        assert tally["source_groups"] == len({r["source_group"] for r in split})
+    assert sum(t["source_groups"] for t in build.report["splits"].values()) == 6
+
+
+@needs_release
+def test_the_released_rows_name_the_groups_the_manifest_reports(released):
+    manifest = json.loads((SPLIT_DIR / "manifest.json").read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for split, rows in released.items():
+        if split == "train_synthetic":
+            continue
+        ids = {r["id"] for r in rows}
+        groups = {r["source_group"] for r in rows}
+        assert groups <= ids, f"{split}: a source group is named after a row outside the split"
+        assert manifest["splits"][split]["source_groups"] == len(groups)
+        names |= groups
+    assert len(names) == manifest["groups"]["n_groups"]
+
+
+@needs_release
 def test_every_released_id_is_unique_and_every_row_loads_in_the_harness(released):
     ids = [r["id"] for rows in released.values() for r in rows]
     assert len(ids) == len(set(ids))
@@ -670,3 +997,5 @@ def test_the_release_directory_says_it_is_provisional():
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["status"] == "provisional"
     assert "seed" in payload
+    assert payload["calibration"]["regime"] in {"dev-calibrated", "calibrated", "manual"}
+    assert payload["calibration"]["rows"] == payload["splits"]["calibration"]["n"]

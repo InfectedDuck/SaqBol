@@ -345,5 +345,15 @@ one the protocol describes.
 3. Add a row to §2 with what the domain is and its terms status. Do not write
    "permits redistribution" without a located, quoted clause.
 4. Collect with `tools/collect.py ingest`, which enforces provenance, URL and
-   access date.
-5. Run `python tools/collect.py check --stats` before committing.
+   access date. Until the tag `system-freeze-v0.1` exists, every new batch is
+   development data and the tool asks for `--dev`, which adds the batch to
+   `data/exposure.json`. After the tag, each new row is compared with the
+   development rows and fragments: a row from an article already read, or
+   carrying a pair or variant key a development row has, is marked as
+   development data; a row that resembles a development row without repeating
+   it is held back until the draft says `"similar_to_dev": "variant"` or
+   `"distinct"`
+   ([holdout policy](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md), section 4).
+5. Run `python tools/collect.py check --stats` before committing. It fails if
+   a batch outside the register was collected before the freeze, or if a
+   lookalike of a development row has no ruling.

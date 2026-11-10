@@ -19,7 +19,7 @@
 
 ## Project status
 
-As of October 2026.
+As of 11 November 2026.
 
 | Part | State |
 |---|---|
@@ -29,8 +29,8 @@ As of October 2026.
 | Telegram bot | Working locally with a bot token; not launched |
 | Language-model layer (hybrid mode) | Built and unit-tested; not yet checked against live providers |
 | Screenshot reading | Built; needs a vision-model key; not yet checked against a live provider |
-| KazScam dataset | 126 rows collected from official warnings and news, 76 usable after filtering; annotation tool ready, independent double annotation not done; not released |
-| Evaluation and leaderboard | Harness built and run in CI on test fixtures; no real results yet |
+| KazScam dataset | 126 rows collected from official warnings and news, 76 usable after filtering. All 76 are development data; the held-out test set has not been collected yet. Annotation tool ready, independent double annotation not done; not released |
+| Evaluation and leaderboard | Harness built and run in CI on test fixtures; no test results yet. The only number so far is a development one |
 | Refusal probe (do models decline to analyse scam text?) | Harness built; not run yet |
 | Public launch | Not started |
 
@@ -149,7 +149,7 @@ Set `DEEPSEEK_API_KEY` or `DASHSCOPE_API_KEY` in `.env` to switch the pipeline f
 
 ## Testing
 
-- 1,370+ Python tests. All of them run with no network and no API keys.
+- 1,520+ Python tests. All of them run with no network and no API keys.
 - Golden cases for each of the 13 scam scripts in Russian, Kazakh and mixed Russian-Kazakh text, plus Chinese for the China scripts; 25 genuine messages that must not be flagged; and a set of prompt-injection attempts.
 - CI on every push: lint, format check, tests with coverage, and an offline evaluation run from config to leaderboard. For the web app: typecheck, component tests, a production build, and a smoke test of every sample page in all four languages.
 
@@ -158,9 +158,10 @@ Set `DEEPSEEK_API_KEY` or `DASHSCOPE_API_KEY` in `.env` to switch the pipeline f
 ```bash
 python -m saqbol.eval run --config eval/configs/v0.1.yaml
 python -m saqbol.eval leaderboard --results eval/runs/<id>/results.json --out leaderboard.md
+python -m saqbol.eval calibrate --config eval/configs/dev.yaml
 ```
 
-The matrix is systems × models × splits × languages × ablations. Every number will carry a stratified bootstrap confidence interval with 10,000 resamples, and the leaderboard generator refuses to print "beats" where intervals overlap.
+The matrix is systems × models × splits × languages × ablations. Every number will carry a stratified bootstrap confidence interval with 10,000 resamples, and the leaderboard generator refuses to print "beats" where intervals overlap. A number with too little data behind it prints as "not reported", and the header states the release tier (none, pilot or benchmark) that the size of the test set allows.
 
 | System | Models | Splits | Ablations |
 |---|---|---|---|
@@ -172,7 +173,7 @@ The matrix is systems × models × splits × languages × ablations. Every numbe
 
 The plan: messages from official warnings and the press, each with a source URL and access date, PII scrubbed with typed placeholders, double-annotated against a written guideline with per-class Cohen's kappa reported, and split so that no near-duplicate crosses a split boundary. Genuine messages that look like scams are a required part of the test set.
 
-Where it is now: 126 rows collected (92 from news, 34 from official warnings), 76 of them usable after removing fragments. The provisional splits were all looked at while writing the rules, so they count as development data, and a fresh held-out set still has to be collected ([why](docs/DESIGN_DECISIONS.md#a-contamination-note-for-the-rules-only-row)). [Datasheet draft](data/DATASHEET.md). Guideline: [docs/07_ANNOTATION_GUIDELINE.md](docs/07_ANNOTATION_GUIDELINE.md). Sources and redistribution basis: [docs/09_SOURCES.md](docs/09_SOURCES.md).
+Where it is now: 126 rows collected (92 from news, 34 from official warnings), 76 of them usable after removing fragments. All 76 were looked at while writing the rules, so they are the `dev` split and no result on them is reported as a test result. The test set will be collected after the system is frozen ([why](docs/DESIGN_DECISIONS.md#a-contamination-note-for-the-rules-only-row), [how](docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md)). [Datasheet draft](data/DATASHEET.md). Guideline: [docs/07_ANNOTATION_GUIDELINE.md](docs/07_ANNOTATION_GUIDELINE.md). Sources and redistribution basis: [docs/09_SOURCES.md](docs/09_SOURCES.md).
 
 ## Privacy
 
@@ -208,7 +209,9 @@ The tool never asks for a code, a card number, or a phone number. Screenshots ar
 | [docs/09_SOURCES.md](docs/09_SOURCES.md) | Where the corpus comes from and on what basis it can be redistributed |
 | [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md) | Why each choice was made, and what went wrong |
 | [data/DATASHEET.md](data/DATASHEET.md) | Datasheet draft for KazScam v0.1 |
-| [docs/10_REMAINING_ROADMAP.md](docs/10_REMAINING_ROADMAP.md) | Remaining work, dependencies and release gates |
+| [docs/10_REMAINING_ROADMAP.md](docs/10_REMAINING_ROADMAP.md) | Remaining work, budget, dependencies and release gates (revised 11 November 2026) |
+| [docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) | What the corpus contains today, and how a test set the system was not built on gets collected |
+| [docs/17_P07_PILOT_PREPARATION_2026-11-11.md](docs/17_P07_PILOT_PREPARATION_2026-11-11.md) | The annotation pilot: the 30 messages, what the labelling page guarantees, and how agreement is computed |
 | [docs/PARALLEL_LANES.md](docs/PARALLEL_LANES.md), [docs/11_CODEX_MINI_PLANS.md](docs/11_CODEX_MINI_PLANS.md) | How the implementation work was split into tasks for AI coding assistants |
 
 ## Contributing

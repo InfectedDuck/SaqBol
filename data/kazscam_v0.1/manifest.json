@@ -1,18 +1,19 @@
 {
   "dataset_version": "kazscam-v0.1",
   "status": "provisional",
-  "built_at": "2026-09-08T16:55:01Z",
+  "built_at": "2026-11-10T18:22:14Z",
   "seed": 20260908,
   "corpus_rows": 126,
   "eligible_rows": 76,
   "excluded_fragments": 50,
   "groups": {
-    "n_groups": 57,
-    "n_multi_row_groups": 19,
-    "rows_in_multi_row_groups": 38,
-    "largest_group": 2,
+    "n_groups": 28,
+    "n_multi_row_groups": 15,
+    "rows_in_multi_row_groups": 63,
+    "largest_group": 18,
     "by_reason": {
-      "shared_key": 19
+      "same_source": 10,
+      "shared_key": 8
     },
     "multi_row_groups": [
       {
@@ -20,6 +21,13 @@
         "corpus_ids": [
           "ks-negatives-01-001",
           "ks-negatives-01-002"
+        ]
+      },
+      {
+        "key": "ks-negatives-01-005",
+        "corpus_ids": [
+          "ks-negatives-01-005",
+          "ks-negatives-01-006"
         ]
       },
       {
@@ -47,28 +55,40 @@
         "key": "ks-official-01-001",
         "corpus_ids": [
           "ks-official-01-001",
-          "ks-official-01-005"
-        ]
-      },
-      {
-        "key": "ks-official-01-002",
-        "corpus_ids": [
           "ks-official-01-002",
-          "ks-official-01-006"
-        ]
-      },
-      {
-        "key": "ks-official-01-003",
-        "corpus_ids": [
           "ks-official-01-003",
-          "ks-official-01-007"
+          "ks-official-01-004",
+          "ks-official-01-005",
+          "ks-official-01-006",
+          "ks-official-01-007",
+          "ks-official-01-008"
         ]
       },
       {
-        "key": "ks-official-01-004",
+        "key": "ks-official-02-001",
         "corpus_ids": [
-          "ks-official-01-004",
-          "ks-official-01-008"
+          "ks-official-02-001",
+          "ks-official-02-002",
+          "ks-official-02-003",
+          "ks-official-02-004",
+          "ks-official-02-005",
+          "ks-official-02-006",
+          "ks-official-02-007"
+        ]
+      },
+      {
+        "key": "ks-press-01-001",
+        "corpus_ids": [
+          "ks-press-01-001",
+          "ks-press-01-002",
+          "ks-press-01-003"
+        ]
+      },
+      {
+        "key": "ks-press-02-001",
+        "corpus_ids": [
+          "ks-press-02-001",
+          "ks-press-02-002"
         ]
       },
       {
@@ -86,85 +106,72 @@
         ]
       },
       {
+        "key": "ks-press-02-010",
+        "corpus_ids": [
+          "ks-press-02-010",
+          "ks-press-02-011",
+          "ks-press-02-012",
+          "ks-press-02-013",
+          "ks-press-02-014"
+        ]
+      },
+      {
+        "key": "ks-press-02-018",
+        "corpus_ids": [
+          "ks-press-02-018",
+          "ks-press-02-019",
+          "ks-press-02-020",
+          "ks-press-02-021"
+        ]
+      },
+      {
         "key": "ks-press-02-032",
         "corpus_ids": [
           "ks-press-02-032",
-          "ks-press-02-042"
-        ]
-      },
-      {
-        "key": "ks-press-02-033",
-        "corpus_ids": [
           "ks-press-02-033",
-          "ks-press-02-043"
-        ]
-      },
-      {
-        "key": "ks-press-02-034",
-        "corpus_ids": [
           "ks-press-02-034",
-          "ks-press-02-044"
-        ]
-      },
-      {
-        "key": "ks-press-02-036",
-        "corpus_ids": [
           "ks-press-02-036",
-          "ks-press-02-046"
-        ]
-      },
-      {
-        "key": "ks-press-02-037",
-        "corpus_ids": [
           "ks-press-02-037",
-          "ks-press-02-047"
-        ]
-      },
-      {
-        "key": "ks-press-02-038",
-        "corpus_ids": [
           "ks-press-02-038",
-          "ks-press-02-048"
-        ]
-      },
-      {
-        "key": "ks-press-02-039",
-        "corpus_ids": [
           "ks-press-02-039",
-          "ks-press-02-049"
-        ]
-      },
-      {
-        "key": "ks-press-02-040",
-        "corpus_ids": [
           "ks-press-02-040",
-          "ks-press-02-050"
+          "ks-press-02-041",
+          "ks-press-02-042",
+          "ks-press-02-043",
+          "ks-press-02-044",
+          "ks-press-02-046",
+          "ks-press-02-047",
+          "ks-press-02-048",
+          "ks-press-02-049",
+          "ks-press-02-050",
+          "ks-press-02-051"
         ]
       },
       {
-        "key": "ks-press-02-041",
+        "key": "ks-press-02-052",
         "corpus_ids": [
-          "ks-press-02-041",
-          "ks-press-02-051"
+          "ks-press-02-052",
+          "ks-press-02-054"
         ]
       }
     ],
     "mixed_provenance_groups": []
   },
+  "dev": {
+    "exposed_rows": 76,
+    "exposed_sources": 39,
+    "rows_pulled_in_by_group_or_source": []
+  },
   "calibration": {
-    "size_requested": 150,
+    "regime": "dev-calibrated",
+    "size_requested": 0,
     "max_fraction": 0.4,
-    "press_pool_rows": 76,
-    "cap_rows": 30,
-    "target_rows": 30,
-    "rows": 30,
-    "fraction_of_pool": 0.39473684210526316,
-    "quota_by_label_lang": {
-      "legit/kk": 2,
-      "legit/ru": 5,
-      "scam/kk": 9,
-      "scam/ru": 14
-    }
+    "press_pool_rows": 0,
+    "cap_rows": 0,
+    "target_rows": 0,
+    "rows": 0,
+    "fraction_of_pool": 0.0,
+    "quota_by_label_lang": {}
   },
   "splits": {
     "train_synthetic": {
@@ -172,61 +179,64 @@
       "by_label": {},
       "by_lang": {},
       "by_label_lang": {},
-      "hard_negative": 0
+      "hard_negative": 0,
+      "source_groups": 0
+    },
+    "dev": {
+      "n": 76,
+      "by_label": {
+        "legit": 17,
+        "scam": 59
+      },
+      "by_lang": {
+        "kk": 28,
+        "ru": 48
+      },
+      "by_label_lang": {
+        "legit/kk": 4,
+        "legit/ru": 13,
+        "scam/kk": 24,
+        "scam/ru": 35
+      },
+      "hard_negative": 17,
+      "source_groups": 28
     },
     "calibration": {
-      "n": 30,
-      "by_label": {
-        "legit": 7,
-        "scam": 23
-      },
-      "by_lang": {
-        "kk": 10,
-        "ru": 20
-      },
-      "by_label_lang": {
-        "legit/kk": 1,
-        "legit/ru": 6,
-        "scam/kk": 9,
-        "scam/ru": 14
-      },
-      "hard_negative": 7
+      "n": 0,
+      "by_label": {},
+      "by_lang": {},
+      "by_label_lang": {},
+      "hard_negative": 0,
+      "source_groups": 0
     },
     "test_press": {
-      "n": 46,
-      "by_label": {
-        "legit": 10,
-        "scam": 36
-      },
-      "by_lang": {
-        "kk": 18,
-        "ru": 28
-      },
-      "by_label_lang": {
-        "legit/kk": 3,
-        "legit/ru": 7,
-        "scam/kk": 15,
-        "scam/ru": 21
-      },
-      "hard_negative": 10
+      "n": 0,
+      "by_label": {},
+      "by_lang": {},
+      "by_label_lang": {},
+      "hard_negative": 0,
+      "source_groups": 0
     },
     "test_donated": {
       "n": 0,
       "by_label": {},
       "by_lang": {},
       "by_label_lang": {},
-      "hard_negative": 0
+      "hard_negative": 0,
+      "source_groups": 0
     }
   },
+  "exposure_register": "data/exposure.json",
   "files": {
     "train_synthetic": "train_synthetic.jsonl",
+    "dev": "dev.jsonl",
     "calibration": "calibration.jsonl",
     "test_press": "test_press.jsonl",
     "test_donated": "test_donated.jsonl"
   },
   "notes": [
     "PROVISIONAL: built from collection labels, not annotated. playbook_id, stage, annotator_a and annotator_b are null on every row. Rebuild after T407.",
-    "`train_synthetic` is empty: the LLM paraphrases do not exist yet. When generated they must be derived from press rows only, never from test_donated or calibration, with the seed row's released id recorded in `source_row_id` so the second leakage rule (no synthetic row shares a source row with any test row) can be checked."
+    "`train_synthetic` is empty: the LLM paraphrases do not exist yet. When generated they must be derived from dev rows only, never from calibration or a test split, with the seed row's released id recorded in `source_row_id` so the second leakage rule (no synthetic row shares a source row with any test row) can be checked."
   ],
-  "corpus_commit": "3c7dd937ce61dbe460ebcd783031854065d9d6a9"
+  "corpus_commit": "41caa9e72b6732c52abb5d17861fbfb6962fdad8"
 }

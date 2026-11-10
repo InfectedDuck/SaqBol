@@ -3,7 +3,9 @@
 One run walks the matrix in `EvalConfig`, executes every cell it can, and
 writes three files under `<out>/<run_id>/`:
 
-- `results.json`, in the contract section 7 shape, through `results.py`;
+- `results.json`, in the contract section 7 shape, through `results.py`,
+  with the row counts the leaderboard's minimum-support rules are checked
+  against (`support.py`);
 - `manifest.json`: config hash, git commit, timestamp, row counts per split
   and language, and every cell that did not run with its reason;
 - `predictions.jsonl`: one line per row per executed cell, with the gold
@@ -41,16 +43,18 @@ import os
 import random
 import subprocess
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from saqbol.core.fuse import DEFAULT_THRESHOLDS, DEFAULT_WEIGHTS
 from saqbol.eval import metrics
 from saqbol.eval.config import LLM_SYSTEMS, EvalConfig, config_hash
 from saqbol.eval.results import ResultRow, Results, write_results
+from saqbol.eval.support import count_support
 from saqbol.eval.systems import (
     ABSTAIN_BAND,
     NO_MODEL,
@@ -100,6 +104,7 @@ class DatasetRow(BaseModel):
     stage: str | None = None
     lang: str = Field(min_length=1)
     hard_negative: bool = False
+    source_group: str | None = None
     text_translated: str | None = None
 
     @model_validator(mode="after")
@@ -309,6 +314,13 @@ def score_cell(
         "selective_risk": metrics.selective_risk(bin_true, bin_pred),
         "per_class_f1": _defined(metrics.per_class_f1(bin_true, bin_pred, labels=BINARY_LABELS)),
     }
+    # What the cell holds, for the leaderboard's minimum-support rules. The
+    # counts are of gold rows, whatever the system did with them: support is
+    # a property of the data, so every system on one slice is treated alike.
+    support = count_support(rows)
+    extra["n_by_label"] = support["by_label"]
+    if "n_source_groups" in support:
+        extra["n_source_groups"] = support["n_source_groups"]
 
     hard = [r.hard_negative for r in rows]
     fpr: float | None = None
@@ -319,15 +331,19 @@ def score_cell(
         )
         extra["n_hard_negative"] = sum(hard)
         extra["fpr_hard_negative_ci95"] = [fpr_ci.lo, fpr_ci.hi]
+        extra["fpr_hard_negative_ci_method"] = fpr_ci.method
 
     # The 13-way playbook label, over the scam rows the system answered. A
     # scam row answered `legit` is a miss with no playbook, and stays in.
+    # Rows that have not been annotated carry no gold playbook at all; a
+    # system that names none would then score a perfect 1.000 for agreeing
+    # with nothing, so a cell without a single gold playbook is not scored.
     scam_rows = [
         (r, p)
         for r, p, label in zip(rows, predictions, y_pred, strict=True)
         if r.label == "scam" and label != ABSTAIN_BAND
     ]
-    if scam_rows:
+    if any(r.playbook_id for r, _ in scam_rows):
         true_pb = [r.playbook_id or MISSING_PLAYBOOK for r, _ in scam_rows]
         pred_pb = [p.playbook_id or MISSING_PLAYBOOK for _, p in scam_rows]
         playbook = metrics.bootstrap_ci(true_pb, pred_pb, seed=seed, n_resamples=n_bootstrap)
@@ -375,6 +391,15 @@ class RunOutcome:
     @property
     def predictions_path(self) -> Path:
         return self.out_dir / "predictions.jsonl"
+
+
+def fusion_in_force() -> dict[str, dict[str, float]]:
+    """The weights and thresholds every pipeline system in a run is built with.
+
+    Written to the manifest so a result can be checked against the calibration
+    artifact that selected them.
+    """
+    return {"weights": asdict(DEFAULT_WEIGHTS), "thresholds": asdict(DEFAULT_THRESHOLDS)}
 
 
 def git_commit() -> str | None:
@@ -477,14 +502,22 @@ class _Runner:
             rows = self.split_rows(split)
             entry: dict[str, Any] = {"path": self.config.splits[split], "exists": rows is not None}  # type: ignore[index]
             if rows is not None:
-                by_lang: dict[str, int] = {}
-                for row in rows:
-                    by_lang[row.lang] = by_lang.get(row.lang, 0) + 1
-                entry["n_rows"] = len(rows)
-                entry["by_lang"] = dict(sorted(by_lang.items()))
-                entry["n_hard_negative"] = sum(1 for r in rows if r.hard_negative)
+                entry.update(count_support(rows))
             summary[split] = entry
         return summary
+
+    def split_support(self) -> dict[str, Any]:
+        """`count_support` of every split that was read, for `results.json`.
+
+        The leaderboard is generated from that file alone, and the release
+        tier is a fact about a whole split, which no single cell records.
+        """
+        support: dict[str, Any] = {}
+        for split in self.config.splits:
+            rows = self.split_rows(split)
+            if rows is not None:
+                support[split] = count_support(rows)
+        return support
 
     # -- systems ------------------------------------------------------------
 
@@ -623,6 +656,8 @@ def run(
         seed=config.seed,
         config_hash=digest,
         git_commit=commit,
+        limit=limit,
+        split_support=runner.split_support(),
     )
     manifest: dict[str, Any] = {
         "run_id": run_id,
@@ -640,6 +675,7 @@ def run(
         "languages": list(config.languages),
         "ablations": list(config.ablations),
         "positive_bands": list(config.positive_bands),
+        "fusion": fusion_in_force(),
         "prompt_hashes": {
             "llm_zeroshot": zeroshot_prompt_hash(),
             "hybrid": judge_prompt_hash(),

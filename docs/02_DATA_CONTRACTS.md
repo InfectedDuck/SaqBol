@@ -342,28 +342,36 @@ Released on Hugging Face as JSONL, one file per split.
   "annotator_b": "scam/kz.bank_security_call",
   "adjudicated": false,
   "hard_negative": false,
-  "scrub_applied": ["phone", "amount_kept", "name"]
+  "scrub_applied": ["phone", "amount_kept", "name"],
+  "source_group": "kazscam-000416"
 }
 ```
 
 Label set: `scam` | `legit` | `ambiguous`. Playbook ID only when `label == scam`.
 
+`source_group` is the `id` of the first row of the row's source group. Rows that share a source article, a parallel-pair or variant key, or near-identical text are one group and carry the same value; a row with no such relative carries its own `id`. A group is one piece of evidence however many rows it holds, so the evaluation prints the number of groups beside every row count. The split files carry two more fields after it for tracing: `text_sha256`, which the leakage rules are stated in, and `corpus_id`, the collection record the row came from.
+
 ### Splits
 
 | Split | Contents | Used for |
 |---|---|---|
-| `train_synthetic` | LLM paraphrases of press rows | Training and prompt development only. **Never** in a reported metric. |
-| `calibration` | 150 rows, stratified | Tuning fusion weights and abstention thresholds. Reported separately. |
-| `test_press` | Rows from public warnings and press | Headline leaderboard number |
+| `train_synthetic` | LLM paraphrases of `dev` rows | Training and prompt development only. **Never** in a reported metric. |
+| `dev` | Every row the system was developed against, listed in `data/exposure.json`, plus any row grouped with one | Writing rules and prompts, the annotation pilot, error analysis. Reported only as development numbers. |
+| `calibration` | A stratified slice of fresh press rows, cut only when at least 250 exist: 20% of them, between 50 and 75 rows | Tuning fusion weights and abstention thresholds. Reported separately. |
+| `test_press` | Fresh rows from public warnings and press | Headline leaderboard number |
 | `test_donated` | Consented user submissions | Held out. Second table. Shows real-world drift. |
 
-Hard negatives live in `test_press` and `test_donated`, flagged by `hard_negative: true`. They are legitimate messages that look like scams: real 1414 codes, Kazpost tracking SMS, Kaspi promotions, Halyk login alerts, genuine OLX buyer chats. False-positive rate on this subset is a headline metric because a tool that flags a real bank SMS gets uninstalled.
+A row is *fresh* when no development session read it before the system was frozen. With fewer than 250 fresh press rows there is no `calibration` split: thresholds are fitted on `dev` and the run is labelled `dev-calibrated`. The reasoning and the reporting minimums are in [15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md).
+
+Hard negatives live in every split, flagged by `hard_negative: true`; the reported false-positive rate uses the ones in `test_press` and `test_donated`. They are legitimate messages that look like scams: real 1414 codes, Kazpost tracking SMS, Kaspi promotions, Halyk login alerts, genuine OLX buyer chats. False-positive rate on this subset is a headline metric because a tool that flags a real bank SMS gets uninstalled.
 
 **Leakage rules**, checked by a test in CI:
 
 - No `text_sha256` appears in two splits.
 - No synthetic row shares a source row with any test row.
 - The calibration split is disjoint from every test split.
+- Rows that share a source article, a parallel-pair or variant key, or near-identical text are one group, and a group is never divided between splits.
+- No row listed in `data/exposure.json`, and no row grouped with one, appears in `calibration`, `test_press` or `test_donated`.
 
 ---
 
@@ -394,5 +402,18 @@ Hard negatives live in `test_press` and `test_donated`, flagged by `hard_negativ
 ```
 
 `leaderboard.md` is generated from this file, never hand-edited. Systems: `rules_only`, `llm_zeroshot`, `hybrid`. Ablations: `none`, `translated`, `cue_masked`, `no_playbook_context`.
+
+The harness writes more than the fields above, and a reader keeps keys it does not know. Some of the additions decide what the leaderboard may print:
+
+| Where | Key | Meaning |
+|---|---|---|
+| Row | `n_rows` | Rows in the cell. `n` is the number of them the macro-F1 was computed on |
+| Row | `n_by_label` | Rows in the cell per gold label |
+| Row | `n_hard_negative` | Hard negatives in the cell; absent when there are none |
+| Row | `n_source_groups` | Distinct `source_group` values in the cell; absent unless every row names its group |
+| Top level | `split_support` | Per split that was read: `n_rows`, `by_label`, `by_lang`, `n_hard_negative`, `n_source_groups` |
+| Top level | `limit` | The `--limit` the run was given; absent on a full run |
+
+`results.json` holds every number the harness computed. The leaderboard applies the minimum-support rules of [15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) section 7 to these counts: a number under its floor prints as `not reported`, and the size of `test_press` sets the release tier (`none`, `pilot` or `benchmark`) printed in the header. A count that is missing is treated as a count that is too small.
 
 State in the README: no "X beats Y" claim without non-overlapping confidence intervals.

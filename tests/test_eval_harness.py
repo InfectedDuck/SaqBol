@@ -19,9 +19,16 @@ import pytest
 from saqbol.core.types import LLMJudgement, Stage
 from saqbol.eval.__main__ import main
 from saqbol.eval.config import EvalConfig, config_hash, load_config
-from saqbol.eval.leaderboard import render_leaderboard, write_leaderboard
-from saqbol.eval.results import read_results
+from saqbol.eval.leaderboard import (
+    NOT_REPORTED,
+    WITHHELD_NOTE,
+    render_leaderboard,
+    run_release,
+    write_leaderboard,
+)
+from saqbol.eval.results import ResultRow, Results, read_results
 from saqbol.eval.run import CellSkipped, DatasetRow, load_split, run, score_cell
+from saqbol.eval.support import Floors
 from saqbol.eval.systems import Prediction, ZeroShotJudgement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +52,11 @@ CONTRACT_ROW_KEYS = {
 
 #: No key, no network: every run in this file looks providers up in here.
 NO_KEYS: dict[str, str] = {}
+
+#: The twelve-row fixture is under every real floor. Tests of how a number is
+#: laid out use floors of one row, which make the fixture a pilot; the tests
+#: of the floors themselves use the defaults.
+TINY_FLOORS = Floors(slice_rows=1, class_rows=1, hard_negatives=1, pilot_rows=1, pilot_legit=1)
 
 
 @pytest.fixture(autouse=True)
@@ -124,11 +136,18 @@ def test_the_manifest_records_provenance_counts_and_skips(tmp_path):
     assert manifest["config_hash"].startswith("sha256:")
     assert "git_commit" in manifest and "timestamp" in manifest
     assert manifest["seed"] == 20260908
+    # The thresholds the systems ran with, to hold against the calibration artifact.
+    assert manifest["fusion"]["thresholds"]["suspicious"] == 0.40
+    assert manifest["fusion"]["thresholds"]["scam"] == 0.70
+    assert manifest["fusion"]["weights"] == {"rule": 0.55, "llm": 0.45}
     split = manifest["splits"]["test_press"]
     assert split["exists"] is True
     assert split["n_rows"] == 12
     assert split["by_lang"] == {"kk": 5, "ru": 7}
+    assert split["by_label"] == {"ambiguous": 1, "legit": 4, "scam": 7}
     assert split["n_hard_negative"] == 3
+    # The fixture predates `source_group`, so no group count is claimed for it.
+    assert "n_source_groups" not in split
     assert manifest["cells"] == {"planned": 3, "executed": 3, "skipped": 0}
     assert manifest["skipped"] == []
     # Every executed row is traceable: one prediction line per row per cell.
@@ -343,7 +362,9 @@ def test_the_leaderboard_prints_intervals_and_makes_no_ranking_claim(tmp_path):
         systems=["rules_only", "hybrid"], models=["deepseek-chat"], languages=["all", "kk"]
     )
     outcome = run(config, out_dir=tmp_path, env=NO_KEYS, run_id="lb")
-    text = render_leaderboard(outcome.results, skipped=outcome.manifest["skipped"])
+    text = render_leaderboard(
+        outcome.results, skipped=outcome.manifest["skipped"], floors=TINY_FLOORS
+    )
 
     assert "beats" not in text
     assert "## test_press" in text
@@ -353,8 +374,343 @@ def test_the_leaderboard_prints_intervals_and_makes_no_ranking_claim(tmp_path):
     assert "## Cells not run" in text
     assert "DEEPSEEK_API_KEY" in text
 
-    written = write_leaderboard(outcome.results_path, tmp_path / "lb" / "leaderboard.md")
+    written = write_leaderboard(
+        outcome.results_path, tmp_path / "lb" / "leaderboard.md", floors=TINY_FLOORS
+    )
     assert written.read_text(encoding="utf-8") == text
+
+
+def test_the_leaderboard_says_a_dev_table_is_not_a_test_result(tmp_path):
+    config = smoke_config(splits={"dev": str(FIXTURE), "test_press": str(FIXTURE)})
+    outcome = run(config, out_dir=tmp_path, env=NO_KEYS, run_id="dev")
+    text = render_leaderboard(outcome.results)
+
+    dev_section, test_section = text.split("## dev", 1)[1].split("## test_press", 1)
+    assert "are not test results" in dev_section
+    assert "Development data" in dev_section
+    assert "not test results" not in test_section
+
+
+def test_a_split_with_no_gold_playbooks_gets_no_playbook_score(tmp_path):
+    """Unannotated rows name no playbook; agreeing with nothing is not a result."""
+    rows = [json.loads(line) for line in FIXTURE.read_text(encoding="utf-8").splitlines() if line]
+    for row in rows:
+        row["playbook_id"] = None
+    bare = tmp_path / "bare.jsonl"
+    lines = [json.dumps(r, ensure_ascii=False) for r in rows]
+    bare.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    outcome = run(
+        smoke_config(splits={"dev": str(bare)}), out_dir=tmp_path, env=NO_KEYS, run_id="bare"
+    )
+    assert outcome.results.rows
+    for row in outcome.results.rows:
+        assert "playbook_macro_f1" not in (row.model_extra or {})
+
+
+def test_the_leaderboard_marks_an_exact_bound_and_explains_the_mark(tmp_path):
+    outcome = run(smoke_config(), out_dir=tmp_path, env=NO_KEYS, run_id="bound")
+    plain = [
+        ResultRow(**{**row.model_dump(), "fpr_hard_negative_ci_method": "bootstrap"})
+        for row in outcome.results.rows
+    ]
+    text = render_leaderboard(
+        outcome.results.model_copy(update={"rows": plain}), floors=TINY_FLOORS
+    )
+    assert "exact one-sided" not in text
+
+    first = {
+        **plain[0].model_dump(),
+        "fpr_hard_negative": 0.0,
+        "fpr_hard_negative_ci95": [0.0, 0.162],
+        "fpr_hard_negative_ci_method": "exact_binomial",
+    }
+    marked = outcome.results.model_copy(update={"rows": [ResultRow(**first), *plain[1:]]})
+    text = render_leaderboard(marked, floors=TINY_FLOORS)
+    assert "0.000 [0.000, 0.162]* |" in text
+    assert "exact one-sided 95 percent binomial bound" in text
+    # Under the real floors the cell prints no rate, so there is no mark to explain.
+    assert "exact one-sided" not in render_leaderboard(marked)
+
+
+# ---------------------------------------------------------------------------
+# Minimum support in the leaderboard
+# ---------------------------------------------------------------------------
+
+
+def result_row(
+    *,
+    split: str = "dev",
+    lang: str = "all",
+    system: str = "rules_only",
+    model: str = "none",
+    macro_f1: float = 0.5,
+    n_rows: int = 76,
+    legit: int = 17,
+    hard: int | None = None,
+    groups: int | None = 28,
+    **extra,
+) -> ResultRow:
+    """A results row with the support counts the harness records."""
+    payload: dict = {
+        "system": system,
+        "model": model,
+        "split": split,
+        "lang": lang,
+        "ablation": "none",
+        "macro_f1": macro_f1,
+        "ci95": (max(0.0, macro_f1 - 0.1), min(1.0, macro_f1 + 0.1)),
+        "n": n_rows,
+        "abstain_rate": 0.0,
+        "n_rows": n_rows,
+        "n_by_label": {"legit": legit, "scam": n_rows - legit},
+    }
+    if hard is not None:
+        payload.update(
+            fpr_hard_negative=0.1, fpr_hard_negative_ci95=[0.05, 0.2], n_hard_negative=hard
+        )
+    if groups is not None:
+        payload["n_source_groups"] = groups
+    payload.update(extra)
+    return ResultRow(**payload)
+
+
+def results_of(rows: list[ResultRow], **extra) -> Results:
+    return Results(run_id="t", dataset_version="kazscam-test", n_bootstrap=100, rows=rows, **extra)
+
+
+def press_support(n_rows: int, legit: int, *, hard: int = 0, kk: int = 0) -> dict:
+    return {
+        "test_press": {
+            "n_rows": n_rows,
+            "by_label": {"legit": legit, "scam": n_rows - legit},
+            "by_lang": {"kk": kk, "ru": n_rows - kk},
+            "n_hard_negative": hard,
+        }
+    }
+
+
+def table_line(text: str, *cells: str) -> str:
+    """The one table line that starts with these cells."""
+    start = "| " + " | ".join(cells) + " |"
+    matches = [line for line in text.splitlines() if line.startswith(start)]
+    assert len(matches) == 1, f"{len(matches)} lines start with {start!r}"
+    return matches[0]
+
+
+def test_the_harness_records_the_support_behind_every_cell(tmp_path):
+    rows = [json.loads(line) for line in FIXTURE.read_text(encoding="utf-8").splitlines() if line]
+    # Two groups of two and eight rows on their own: ten groups in twelve rows.
+    for row, group in zip(rows, ["a", "a", "b", "b"], strict=False):
+        row["source_group"] = group
+    for row in rows[4:]:
+        row["source_group"] = row["id"]
+    grouped = tmp_path / "grouped.jsonl"
+    lines = [json.dumps(r, ensure_ascii=False) for r in rows]
+    grouped.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    config = smoke_config(splits={"test_press": str(grouped)})
+    outcome = run(config, out_dir=tmp_path, env=NO_KEYS, run_id="support")
+    by_lang = {row.lang: row for row in outcome.results.rows}
+    assert by_lang["all"].n_by_label == {"ambiguous": 1, "legit": 4, "scam": 7}
+    assert by_lang["all"].n_source_groups == 10
+    assert by_lang["kk"].n_by_label == {"ambiguous": 1, "legit": 1, "scam": 3}
+
+    # The split's own counts travel in results.json, which is all the
+    # leaderboard reads, and survive the round trip through the file.
+    read_back = read_results(outcome.results_path)
+    assert read_back.split_support == {
+        "test_press": {
+            "n_rows": 12,
+            "by_label": {"ambiguous": 1, "legit": 4, "scam": 7},
+            "by_lang": {"kk": 5, "ru": 7},
+            "n_hard_negative": 3,
+            "n_source_groups": 10,
+        }
+    }
+    # A full run records no limit; the file leaves out what has no value.
+    assert "limit" not in (read_back.model_extra or {})
+    assert "| 12 (10) |" in render_leaderboard(read_back)
+
+    # A file whose rows name no group gets a dash, never a count of its rows.
+    plain = run(load_config(SMOKE_CONFIG), out_dir=tmp_path, env=NO_KEYS, run_id="plain")
+    assert all("n_source_groups" not in (r.model_extra or {}) for r in plain.results.rows)
+    assert "| 12 (—) |" in render_leaderboard(plain.results)
+
+
+def test_the_smoke_fixture_is_too_small_to_publish_anything(tmp_path):
+    outcome = run(load_config(SMOKE_CONFIG), out_dir=tmp_path, env=NO_KEYS, run_id="small")
+    text = render_leaderboard(outcome.results)
+
+    assert run_release(outcome.results).tier == "none"
+    assert "**Release tier: none.**" in text
+    assert "12 rows (needs 60)" in text
+    assert WITHHELD_NOTE in text
+    assert "(pilot)" not in text
+    for row in outcome.results.rows:
+        assert f"{row.macro_f1:.3f}" not in text.split("## test_press", 1)[1]
+    assert table_line(text, "rules_only", "none", "all", "none", "12 (—)").count(NOT_REPORTED) == 5
+    # results.json still holds every number that was computed.
+    assert all(row.macro_f1 > 0 for row in read_results(outcome.results_path).rows)
+
+
+def test_a_partial_run_publishes_no_test_number(tmp_path):
+    outcome = run(load_config(SMOKE_CONFIG), out_dir=tmp_path, env=NO_KEYS, run_id="cut", limit=5)
+    assert read_results(outcome.results_path).limit == 5
+    text = render_leaderboard(outcome.results, floors=TINY_FLOORS)
+    assert "**Release tier: none.**" in text
+    assert "--limit 5" in text
+    assert WITHHELD_NOTE in text
+
+
+def test_a_development_table_prints_only_the_numbers_with_enough_rows_behind_them():
+    results = results_of(
+        [
+            result_row(lang="all", macro_f1=0.486, n_rows=76, legit=17, hard=17, groups=28),
+            result_row(lang="ru", macro_f1=0.499, n_rows=48, legit=13, hard=13, groups=20),
+            result_row(lang="kk", macro_f1=0.447, n_rows=28, legit=4, hard=4, groups=16),
+        ],
+        split_support={"dev": {"n_rows": 76}},
+    )
+    text = render_leaderboard(results)
+
+    assert "This run read no `test_press` rows" in text
+    whole = table_line(text, "rules_only", "none", "all", "none", "76 (28)")
+    assert "0.486 [0.386, 0.586]" in whole
+    assert "not reported (17 hard negatives)" in whole
+    assert "1.000" in whole  # coverage is still printed
+    russian = table_line(text, "rules_only", "none", "ru", "none", "48 (20)")
+    assert "0.499 [0.399, 0.599]" in russian
+    assert "not reported (13 hard negatives)" in russian
+    # Twenty-eight rows are under the slice floor: no metric at all.
+    kazakh = table_line(text, "rules_only", "none", "kk", "none", "28 (16)")
+    assert kazakh.count(NOT_REPORTED) == 5
+    assert "0.447" not in text
+
+
+def test_macro_f1_is_withheld_from_a_slice_with_a_thin_class():
+    results = results_of([result_row(n_rows=40, legit=9, hard=30, macro_f1=0.7)])
+    line = table_line(render_leaderboard(results), "rules_only", "none", "all", "none", "40 (28)")
+    assert "not reported (9 legit)" in line
+    assert "0.700" not in line
+    # Thirty hard negatives are enough for the rate, whatever the F1 lacks.
+    assert "0.100 [0.050, 0.200]" in line
+
+
+def test_a_cell_that_records_no_counts_prints_no_number():
+    bare = ResultRow(
+        system="rules_only",
+        model="none",
+        split="dev",
+        lang="all",
+        ablation="none",
+        macro_f1=0.9,
+        ci95=(0.8, 1.0),
+        n=500,
+        fpr_hard_negative=0.0,
+        abstain_rate=0.0,
+    )
+    line = table_line(
+        render_leaderboard(results_of([bare])), "rules_only", "none", "all", "none", "500 (—)"
+    )
+    assert "not reported (class counts not recorded)" in line
+    assert "not reported (hard-negative count not recorded)" in line
+    assert "0.900" not in line
+
+
+def test_a_cell_with_no_hard_negatives_still_prints_a_dash_for_the_rate():
+    results = results_of([result_row(n_rows=40, legit=12)])
+    line = table_line(render_leaderboard(results), "rules_only", "none", "all", "none", "40 (28)")
+    assert "0.500 [0.400, 0.600] | — |" in line
+
+
+def test_a_pilot_is_titled_a_pilot_wherever_a_test_number_appears():
+    results = results_of(
+        [
+            result_row(split="dev"),
+            result_row(split="test_press", n_rows=80, legit=25, hard=25, macro_f1=0.6),
+            result_row(split="test_press", lang="kk", n_rows=20, legit=5, macro_f1=0.3),
+        ],
+        split_support=press_support(80, 25, hard=25, kk=20),
+    )
+    text = render_leaderboard(results)
+
+    assert text.startswith("# Leaderboard — kazscam-test (pilot)\n")
+    assert "**Release tier: pilot.**" in text
+    assert "80 rows (needs 200)" in text
+    assert "## test_press (pilot)" in text
+    assert "## dev\n" in text
+    assert WITHHELD_NOTE not in text
+    test_table = text.split("## test_press (pilot)", 1)[1]
+    assert "0.600 [0.500, 0.700]" in test_table
+    assert "not reported (25 hard negatives)" in test_table
+    # The pilot publishes supported slices only.
+    assert table_line(text, "rules_only", "none", "kk", "none", "20 (28)").count(NOT_REPORTED) == 5
+
+
+def test_a_benchmark_prints_the_full_table_without_the_pilot_title():
+    results = results_of(
+        [result_row(split="test_press", n_rows=200, legit=60, hard=40, macro_f1=0.8)],
+        split_support=press_support(200, 60, hard=40, kk=100),
+    )
+    text = render_leaderboard(results)
+    assert "**Release tier: benchmark.**" in text
+    assert "(pilot)" not in text
+    assert "0.800 [0.700, 0.900] | 0.100 [0.050, 0.200] |" in text
+
+
+def test_a_tier_of_none_withholds_the_donated_table_too():
+    results = results_of(
+        [
+            result_row(split="test_press", n_rows=46, legit=10, macro_f1=0.61),
+            result_row(split="test_donated", n_rows=90, legit=40, macro_f1=0.72),
+        ],
+        split_support=press_support(46, 10),
+    )
+    text = render_leaderboard(results)
+    assert "**Release tier: none.**" in text
+    assert text.count(WITHHELD_NOTE) == 2
+    assert "0.610" not in text
+    assert "0.720" not in text
+
+
+def test_test_rows_with_no_recorded_split_size_are_not_published():
+    """A results file from before the counts existed cannot show it clears a floor."""
+    results = results_of([result_row(split="test_press", n_rows=300, legit=90, macro_f1=0.9)])
+    text = render_leaderboard(results)
+    assert "does not record the size of its splits" in text
+    assert "0.900" not in text
+
+
+def test_withheld_rows_are_not_ranked_by_the_number_that_was_withheld():
+    rows = [
+        result_row(split="test_press", system="hybrid", model="m", macro_f1=0.2, n_rows=12),
+        result_row(split="test_press", system="rules_only", macro_f1=0.9, n_rows=12),
+        result_row(split="test_press", system="llm_zeroshot", model="m", macro_f1=0.5, n_rows=12),
+    ]
+    text = render_leaderboard(results_of(rows, split_support=press_support(12, 4)))
+    order = [line.split(" | ")[0] for line in text.splitlines() if " | all | none | 12 " in line]
+    assert order == ["| hybrid", "| llm_zeroshot", "| rules_only"]
+
+    # With numbers that may be printed, the best point estimate comes first.
+    big = [
+        row.model_copy(update={"n_rows": 80, "n_by_label": {"legit": 30, "scam": 50}})
+        for row in rows
+    ]
+    text = render_leaderboard(results_of(big, split_support=press_support(80, 30)))
+    order = [line.split(" | ")[0] for line in text.splitlines() if " | all | none | 80 " in line]
+    assert order == ["| rules_only", "| llm_zeroshot", "| hybrid"]
+
+
+def test_the_header_states_the_floors_that_were_applied():
+    results = results_of([result_row()])
+    text = render_leaderboard(results)
+    assert "fewer than 30 rows" in text
+    assert "at least 10 rows of each class" in text
+    assert "at least 30 hard negatives" in text
+    assert "The intervals resample rows, not groups" in text
+    loose = render_leaderboard(results, floors=TINY_FLOORS)
+    assert "fewer than 1 rows" in loose
 
 
 def test_the_cli_runs_the_smoke_matrix_and_renders_the_leaderboard(tmp_path, capsys):

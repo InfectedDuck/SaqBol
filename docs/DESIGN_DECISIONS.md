@@ -71,18 +71,22 @@ on test.
 
 ## 4. How the dataset avoids leakage
 
-Four sources, kept apart:
+Five pools, kept apart:
 
-| Source | Used for |
+| Pool | Used for |
 |---|---|
-| Press and official warnings | test split, with the source URL on every row |
-| Donated messages from real users | a separate test split |
-| Synthetic paraphrases | training and prompt development only, never reported |
-| Calibration, 150 rows | fitting weights and thresholds, reported separately |
+| `dev`: every row the system was developed against | writing rules and prompts, error analysis, fitting thresholds while the fresh pool is small; never a reported test number |
+| Press and official warnings collected after the system freeze | test split, with the source URL on every row |
+| Donated messages from real users, reviewed after the freeze | a separate test split |
+| Synthetic paraphrases of `dev` rows | prompt development only, never reported |
+| Calibration slice, cut only when 250 or more fresh rows exist | fitting weights and thresholds, reported separately |
 
-Three tests fail the build if this is violated: no `text_sha256` appears in
-two splits; no synthetic row descends from a test row (each paraphrase carries
-the id of its seed); calibration is disjoint from every test split.
+Tests fail the build if this is violated: no `text_sha256` appears in two
+splits; no synthetic row descends from a test row (each paraphrase carries
+the id of its seed); calibration is disjoint from every test split; rows from
+one article, one translation pair or one near-duplicate cluster are never
+divided between splits; and no row listed in the exposure register
+(`data/exposure.json`) reaches calibration or test.
 
 Every split also carries hard negatives: genuine bank, delivery and eGov
 messages that share surface form with scams. A genuine bank warning about
@@ -109,7 +113,44 @@ splits are rebuilt after annotation with rows collected later. And the
 remaining misses are mostly by design: a single high-severity cue scores
 0.25, below the 0.40 band, because the thresholds were set for multi-cue
 messages. Whether one-line quotes deserve a lower threshold is a calibration
-question for T505, answered on the calibration split only.
+question for T505, answered on calibration data only.
+
+On 11 November 2026 the caveat became a rule. All 76 messages are listed in
+`data/exposure.json`, the split builder sends them to `dev`, and the
+`calibration` and `test_press` files stay empty until rows collected after
+the system freeze fill them. The counts above are therefore development
+numbers, and so is the rules-only macro-F1 of 0.486 on `dev` that
+`eval/configs/dev.yaml` produces. The audit and the policy are in
+[the P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md).
+
+The same day the threshold question was put to the data
+(`python -m saqbol.eval calibrate`, procedure in
+[the evaluation protocol](05_EVAL_PROTOCOL.md), section 7). The answer is
+that the threshold stays at 0.40.
+
+A threshold of 0.25 or lower would flag any message carrying one
+high-severity cue. It would catch 35 of the 59 `dev` scam messages, up from
+20, and no `dev` hard negative would be flagged. That second figure is not
+evidence: every `dev` hard negative scores zero, because the rules were
+written against them. The regression suite is the evidence. It holds a
+genuine eGov message, "1414: Код подтверждения 8391 для входа на портал
+eGov. Никому не сообщайте код.", which carries one high-severity cue and
+scores 25.
+Flagging it is the error the product must not make, so every threshold of
+0.25 or lower is ruled out.
+
+Between 0.26 and 0.37 the suite holds and five more scam messages are
+caught, each with one high-severity and one medium cue. The gain is +0.062
+macro-F1. Four of
+the five come from one article and the fifth from another, and the interval
+of the gain over source groups runs from 0.000 to 0.111. Two articles are
+not enough to move a threshold that every later number depends on.
+
+The misses are a coverage problem more than a threshold problem. Of the 59
+scam messages, 15 fire no rule at all and 8 fire a single medium cue. No
+threshold reaches those without flagging ordinary messages; a model
+judgement or more phrases might, and the phrase lists are frozen with the
+rest of the system at the tag `system-freeze-v0.1`.
 
 ## 5. What the cue-masked ablation controls for
 

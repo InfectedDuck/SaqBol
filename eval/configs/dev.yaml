@@ -1,0 +1,26 @@
+# Development matrix: the offline baseline over the `dev` split.
+#
+#   python -m saqbol.eval run --config eval/configs/dev.yaml
+#
+# `dev` holds every row the system was developed against
+# (docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md). A number from this
+# file is a development number: use it to compare two versions of the rules
+# or to fit thresholds, and never report it as a test result. The reported
+# matrix is eval/configs/v0.1.yaml, which reads the held-out splits only.
+#
+# No model, no key, no network. Add `llm_zeroshot` and `hybrid` to `systems`
+# and a `models` list once a provider key is configured.
+
+name: kazscam-dev
+dataset_version: kazscam-v0.1
+seed: 20260908
+n_bootstrap: 10000
+
+systems: [rules_only]
+
+splits:
+  dev: data/kazscam_v0.1/dev.jsonl
+
+languages: [all, ru, kk]
+ablations: [none]
+positive_bands: [scam, suspicious]

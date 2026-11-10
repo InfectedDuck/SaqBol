@@ -50,8 +50,10 @@ from saqbol.core.types import (
 
 @dataclass(frozen=True)
 class FusionWeights:
-    """Relative trust in each judgement. Fitted on the calibration split
-    (T505), never on test.
+    """Relative trust in each judgement. Not fitted yet: with no model
+    judgement the rule score is the whole risk and the weights cancel, so
+    they can only be fitted once a model system runs, on calibration data
+    and never on test.
 
     Retrieval has no weight here, deliberately. Similarity answers "which
     script is this", not "is this a scam", and treating it as a third vote
@@ -73,7 +75,9 @@ class Thresholds:
     #: indicator is worth 40 of the 100-point cap, so a threshold above 0.40
     #: made "назовите код из СМС" — a bare credential request, the single
     #: strongest signal in the catalogue — come out as likely safe.
-    #: Refitted on the calibration split in T505.
+    #: The rules-only fit (`python -m saqbol.eval calibrate`) searched 0.01
+    #: to 0.40 and kept this value; `eval/calibration/rules_only.json` holds
+    #: the search, and a test fails if the two drift apart.
     suspicious: float = 0.40
     #: Gap between the rules and the model above which neither is trusted.
     disagreement: float = 0.40

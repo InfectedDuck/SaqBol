@@ -10,6 +10,13 @@ intervals first; this module never calls it.
 A metric a cell did not measure prints as a dash. That is the reading rule
 `metrics.py` sets for an undefined number, and it keeps a cell with no hard
 negatives from printing a false-positive rate of zero.
+
+A metric a cell measured on too little data prints as `not reported`. The
+floors are defined in `support.py`; this module applies them, because the
+leaderboard is where a number becomes a published one. `results.json` keeps
+every number the harness computed. The held-out tables also depend on the
+release tier of the run: under the floor for a pilot they print row counts
+and no number.
 """
 
 from __future__ import annotations
@@ -21,6 +28,17 @@ from pathlib import Path
 from typing import Any
 
 from saqbol.eval.results import ABLATIONS, LANGS, SPLITS, ResultRow, Results, read_results
+from saqbol.eval.support import (
+    DEFAULT_FLOORS,
+    TEST_SPLITS,
+    TIER_SPLIT,
+    Floors,
+    Release,
+    f1_gap,
+    fpr_gap,
+    release_tier,
+    slice_gap,
+)
 
 DASH = "—"
 
@@ -30,12 +48,61 @@ RULE = (
     "ordered by point estimate within each group only so the table can be read."
 )
 
+#: Printed under the heading of a split whose numbers are not test results,
+#: so the table cannot be quoted without the caveat.
+SPLIT_NOTES: dict[str, str] = {
+    "dev": (
+        "Development data. The system was built against these rows, so the numbers below "
+        "are development numbers and are not test results."
+    ),
+    "calibration": (
+        "Calibration data. Thresholds were fitted on these rows, so the numbers below are "
+        "not test results."
+    ),
+}
+
+#: Printed over a held-out table when the release tier allows no test number.
+WITHHELD_NOTE = (
+    "The release tier is `none`, so this table lists the cells that ran and how many rows "
+    "each one read, and prints no number."
+)
+
+#: Marks a hard-negative interval that is an exact bound, not a bootstrap one.
+EXACT_MARK = "*"
+EXACT_NOTE = (
+    f"A hard-negative FPR marked `{EXACT_MARK}` comes from a cell where no hard negative was "
+    "flagged, or every one was. Resampling such a cell gives an interval with no width, so "
+    "the bracket is the exact one-sided 95 percent binomial bound instead: with none of "
+    "`n` flagged, the rate is at most the upper figure."
+)
+
+#: Printed in place of a number the cell has too little data for.
+NOT_REPORTED = "not reported"
+
+
+def support_note(floors: Floors) -> str:
+    """The two paragraphs that explain `not reported` and the bracketed count."""
+    return (
+        f"`{NOT_REPORTED}` marks a number with too little data behind it. A slice of fewer than "
+        f"{floors.slice_rows} rows prints no metric; macro-F1 needs at least {floors.class_rows} "
+        f"rows of each class; the hard-negative FPR needs at least {floors.hard_negatives} hard "
+        "negatives. The count that fell short is given in brackets. `results.json` keeps every "
+        "number.\n"
+        "\n"
+        "`rows (source groups)` is the number of rows in the cell and, in brackets, the number "
+        "of source groups they come from. Rows that share an article, a translation pair or "
+        "near-identical text are one group, so the bracketed figure is the better guide to how "
+        "much independent evidence the cell holds. The intervals resample rows, not groups, "
+        "and are narrower than that evidence warrants wherever the two figures differ."
+    )
+
+
 _COLUMNS = (
     "system",
     "model",
     "lang",
     "ablation",
-    "n",
+    "rows (source groups)",
     "macro-F1 [95% CI]",
     "hard-neg FPR [95% CI]",
     "coverage",
@@ -63,7 +130,49 @@ def _extra(row: ResultRow, key: str) -> Any:
     return (row.model_extra or {}).get(key)
 
 
-def _render_row(row: ResultRow) -> str:
+def _is_exact(row: ResultRow) -> bool:
+    return _extra(row, "fpr_hard_negative_ci_method") == "exact_binomial"
+
+
+def _withheld(reason: str | None = None) -> str:
+    return f"{NOT_REPORTED} ({reason})" if reason else NOT_REPORTED
+
+
+def _n_rows(row: ResultRow) -> int:
+    recorded = _extra(row, "n_rows")
+    return recorded if isinstance(recorded, int) else row.n
+
+
+def _f1_reported(row: ResultRow, floors: Floors, withhold: bool) -> bool:
+    if withhold or slice_gap(_n_rows(row), floors):
+        return False
+    return f1_gap(_extra(row, "n_by_label"), floors) is None
+
+
+def _render_row(row: ResultRow, floors: Floors, *, withhold: bool) -> str:
+    """One table line. `withhold` blanks every metric: the tier allows no test number."""
+    n_rows = _n_rows(row)
+    groups = _extra(row, "n_source_groups")
+    counts = f"{n_rows} ({groups if isinstance(groups, int) else DASH})"
+    identity = (row.system, row.model, row.lang, row.ablation, counts)
+
+    if withhold or slice_gap(n_rows, floors):
+        blank = (NOT_REPORTED,) * (len(_COLUMNS) - len(identity))
+        return "| " + " | ".join((*identity, *blank)) + " |"
+
+    thin_classes = f1_gap(_extra(row, "n_by_label"), floors)
+    f1_cell = _withheld(thin_classes) if thin_classes else _interval(row.macro_f1, row.ci95)
+
+    if row.fpr_hard_negative is None:
+        fpr_cell = DASH
+    else:
+        thin_hard = fpr_gap(_extra(row, "n_hard_negative"), floors)
+        if thin_hard:
+            fpr_cell = _withheld(thin_hard)
+        else:
+            fpr_cell = _interval(row.fpr_hard_negative, _extra(row, "fpr_hard_negative_ci95"))
+            fpr_cell += EXACT_MARK if _is_exact(row) else ""
+
     coverage = None if row.abstain_rate is None else 1.0 - row.abstain_rate
     stage = _extra(row, "stage_accuracy")
     if stage is None:
@@ -73,13 +182,9 @@ def _render_row(row: ResultRow) -> str:
             f"{stage:.3f} ({_extra(row, 'stage_n_correct')}/{_extra(row, 'stage_n_eligible')})"
         )
     cells = (
-        row.system,
-        row.model,
-        row.lang,
-        row.ablation,
-        str(row.n),
-        _interval(row.macro_f1, row.ci95),
-        _interval(row.fpr_hard_negative, _extra(row, "fpr_hard_negative_ci95")),
+        *identity,
+        f1_cell,
+        fpr_cell,
         _fmt(coverage),
         _interval(_extra(row, "playbook_macro_f1"), _extra(row, "playbook_ci95")),
         stage_cell,
@@ -91,27 +196,79 @@ def _render_row(row: ResultRow) -> str:
 _LANG_ORDER: tuple[str, ...] = ("all", *(lang for lang in LANGS if lang != "all"))
 
 
-def _order(row: ResultRow) -> tuple[int, int, float, str, str]:
-    ablation_rank = ABLATIONS.index(row.ablation)
-    lang_rank = _LANG_ORDER.index(row.lang) if row.lang in _LANG_ORDER else len(_LANG_ORDER)
-    return (ablation_rank, lang_rank, -row.macro_f1, row.system, row.model)
+def _table(rows: Sequence[ResultRow], floors: Floors, *, withhold: bool) -> list[str]:
+    def order(row: ResultRow) -> tuple[int, int, float, str, str]:
+        ablation_rank = ABLATIONS.index(row.ablation)
+        lang_rank = _LANG_ORDER.index(row.lang) if row.lang in _LANG_ORDER else len(_LANG_ORDER)
+        # A row whose macro-F1 is not printed is not ranked by it either, or
+        # its place in the table would give away the number that was withheld.
+        point = -row.macro_f1 if _f1_reported(row, floors, withhold) else 0.0
+        return (ablation_rank, lang_rank, point, row.system, row.model)
 
-
-def _table(rows: Sequence[ResultRow]) -> list[str]:
     header = "| " + " | ".join(_COLUMNS) + " |"
     rule = "|" + "|".join("---" for _ in _COLUMNS) + "|"
-    return [header, rule, *(_render_row(r) for r in sorted(rows, key=_order))]
+    return [
+        header,
+        rule,
+        *(_render_row(r, floors, withhold=withhold) for r in sorted(rows, key=order)),
+    ]
 
 
-def render_leaderboard(results: Results, *, skipped: Sequence[Mapping[str, Any]] = ()) -> str:
+def _exact_mark_printed(results: Results, floors: Floors, withheld_splits: Sequence[str]) -> bool:
+    return any(
+        _is_exact(row)
+        and row.split not in withheld_splits
+        and row.fpr_hard_negative is not None
+        and not slice_gap(_n_rows(row), floors)
+        and not fpr_gap(_extra(row, "n_hard_negative"), floors)
+        for row in results.rows
+    )
+
+
+def run_release(results: Results, floors: Floors = DEFAULT_FLOORS) -> Release:
+    """The release tier of a results file, from the split sizes it records.
+
+    A file that holds held-out rows and does not say how large the split is
+    cannot show that it clears a floor, so it gets no tier.
+    """
+    extras = results.model_extra or {}
+    support = extras.get("split_support")
+    if not isinstance(support, Mapping):
+        if any(row.split in TEST_SPLITS for row in results.rows):
+            return Release(
+                "none",
+                "This results file does not record the size of its splits, so the release "
+                "tier cannot be checked and no test number is published. Run the evaluation "
+                "again.",
+            )
+        support = {}
+    facts = support.get(TIER_SPLIT)
+    limit = extras.get("limit")
+    return release_tier(
+        facts if isinstance(facts, Mapping) else None,
+        floors,
+        limit=limit if isinstance(limit, int) else None,
+    )
+
+
+def render_leaderboard(
+    results: Results,
+    *,
+    skipped: Sequence[Mapping[str, Any]] = (),
+    floors: Floors = DEFAULT_FLOORS,
+) -> str:
     """The markdown leaderboard for one results file.
 
     `skipped` is the manifest's list of cells that did not run; when given,
     they are listed with their reasons so an absent row is explained rather
-    than left to be inferred.
+    than left to be inferred. `floors` are the minimum-support rules; the
+    paragraph under the header prints whichever ones were applied.
     """
+    release = run_release(results, floors)
+    pilot = " (pilot)" if release.tier == "pilot" else ""
+    withheld_splits = TEST_SPLITS if release.tier == "none" else ()
     lines = [
-        f"# Leaderboard — {results.dataset_version}",
+        f"# Leaderboard — {results.dataset_version}{pilot}",
         "",
         f"Generated from `results.json` for run `{results.run_id}` "
         f"({results.n_bootstrap:,} bootstrap resamples). Do not edit by hand; regenerate "
@@ -124,12 +281,25 @@ def render_leaderboard(results: Results, *, skipped: Sequence[Mapping[str, Any]]
         "Playbook macro-F1 is over the scam rows the system answered, with a missing playbook "
         "scored as its own class. A dash marks a metric the cell did not measure.",
         "",
+        support_note(floors),
+        "",
+        f"**Release tier: {release.tier}.** {release.reason}",
+        "",
     ]
+    if _exact_mark_printed(results, floors, withheld_splits):
+        lines += [EXACT_NOTE, ""]
     present = [s for s in SPLITS if any(r.split == s for r in results.rows)]
     if not present:
         lines += ["No cell of the matrix produced a result.", ""]
     for split in present:
-        lines += [f"## {split}", "", *_table([r for r in results.rows if r.split == split]), ""]
+        lines += [f"## {split}{pilot if split in TEST_SPLITS else ''}", ""]
+        if split in SPLIT_NOTES:
+            lines += [SPLIT_NOTES[split], ""]
+        withhold = split in withheld_splits
+        if withhold:
+            lines += [WITHHELD_NOTE, ""]
+        rows = [r for r in results.rows if r.split == split]
+        lines += [*_table(rows, floors, withhold=withhold), ""]
     if skipped:
         lines += [
             "## Cells not run",
@@ -180,7 +350,10 @@ def _skipped_beside(results_path: Path) -> list[Mapping[str, Any]]:
 
 
 def write_leaderboard(
-    results_path: str | os.PathLike[str], out_path: str | os.PathLike[str]
+    results_path: str | os.PathLike[str],
+    out_path: str | os.PathLike[str],
+    *,
+    floors: Floors = DEFAULT_FLOORS,
 ) -> Path:
     """Render `results_path` to markdown at `out_path`.
 
@@ -189,7 +362,7 @@ def write_leaderboard(
     """
     source = Path(results_path)
     results = read_results(source)
-    text = render_leaderboard(results, skipped=_skipped_beside(source))
+    text = render_leaderboard(results, skipped=_skipped_beside(source), floors=floors)
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8", newline="\n")

@@ -143,20 +143,26 @@ playbook set: `[[TBD: other_scam share, from T407]]`. `ambiguous` rows:
 | `adjudicated` | bool | True where the two disagreed and a decision was logged. |
 | `scrub_applied` | bool | Scrubber has run. |
 | `scrub_placeholders` | list | Placeholder types present in `text`. |
+| `source_group` | string | Released rows only. The `id` of the first row of the row's source group: rows from one article, a translation pair, a variant group or near-identical text share it. |
 | `text_hash` | string | Hash of the normalised verbatim text, for duplicate and leakage checks. |
 | `notes` | string | Pair keys, `UNSURE`, "illustrative text" flags. |
 
-**Splits.** Sizes are decided at T408.
+**Splits.** Built by `python -m saqbol.eval splits`. The counts are the
+build of 11 November 2026 and change when fresh rows are collected. The
+policy is in [docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](../docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md).
 
 | Split | Contents | Rows |
 |---|---|---|
-| `test_press` | Message rows from press and official warnings, including hard negatives | `[[TBD: test_press size, from T408]]` |
-| `test_donated` | Consented user submissions, held out | `[[TBD: test_donated size, from T408]]` |
-| `calibration` | Stratified rows for tuning fusion weights and abstention thresholds; disjoint from every test split | `[[TBD: calibration size, from T408; the protocol asks for 150, which 76 message rows cannot supply]]` |
-| `train_synthetic` | LLM paraphrases of press rows, each recording its seed row; never in a reported metric | `[[TBD: train_synthetic size, from T408]]` |
+| `dev` | Every message the system was developed against, as listed in `data/exposure.json`, and any row grouped with one. Never a reported test number | 76, in 28 source groups |
+| `test_press` | Message rows from press and official warnings collected after the system freeze, including hard negatives | 0; collection has not started |
+| `test_donated` | Consented user submissions reviewed after the freeze, held out | 0 |
+| `calibration` | A stratified slice of fresh press rows for tuning fusion weights and abstention thresholds, cut only when at least 250 exist (20% of them, 50 to 75 rows). Below that, thresholds are fitted on `dev` and the run is labelled `dev-calibrated` | 0 |
+| `train_synthetic` | LLM paraphrases of `dev` rows, each recording its seed row; never in a reported metric | 0; not generated |
 
-Leakage rules checked in CI: no `text_hash` in two splits, no synthetic row
-derived from a test row, calibration disjoint from every test split.
+Leakage rules checked in CI: no text digest in two splits, no synthetic row
+derived from a test row, calibration disjoint from every test split, no
+source article, translation pair, variant group or near-duplicate cluster
+divided between splits, and no row from the exposure register outside `dev`.
 
 **Relationships between rows.** 38 rows carry a `parallel pair key` in
 `notes`: the same content in Russian and Kazakh (the ARDFM vishing page, the
@@ -373,7 +379,10 @@ source page; a misattributed source. In every case the row leaves the next
 version and the removal is logged.
 
 **Contributions.** New rows enter only through `tools/collect.py` and only
-from a domain listed in `docs/09_SOURCES.md`.
+from a domain listed in `docs/09_SOURCES.md`. The tool screens each new row
+against the development data and records the outcome on the row, so a row
+that repeats, rewords or shares an article with a development row cannot be
+collected as a test row.
 
 ## Ethics
 

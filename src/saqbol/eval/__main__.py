@@ -1,10 +1,13 @@
-"""`python -m saqbol.eval`: run the matrix, render the leaderboard, or build the splits.
+"""`python -m saqbol.eval`: run the matrix, render the leaderboard, build the splits, or
+fit the thresholds.
 
     python -m saqbol.eval run --config eval/configs/v0.1.yaml [--limit N]
         [--systems rules_only,hybrid] [--out DIR] [--run-id ID]
     python -m saqbol.eval leaderboard --results DIR/results.json --out DIR/leaderboard.md
     python -m saqbol.eval splits --corpus data/corpus --out data/kazscam_v0.1
-        --seed 20260908 [--calibration-size 150]
+        --seed 20260908 [--exposure data/exposure.json] [--calibration-size N]
+    python -m saqbol.eval calibrate --config eval/configs/dev.yaml
+        [--split dev] [--guard tests/fixtures/golden] [--out eval/calibration/rules_only.json]
 
 `run` exits 0 whenever the run completed, however many cells were skipped:
 the manifest and the summary printed here say which cells did not run and
@@ -19,10 +22,18 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from saqbol.eval.calibrate import (
+    DEFAULT_GUARD_DIR,
+    DEFAULT_OUT,
+    REGIMES,
+    calibrate,
+    describe,
+    write_artifact,
+)
 from saqbol.eval.config import DEFAULT_SEED, load_config
 from saqbol.eval.leaderboard import group_skipped, write_leaderboard
 from saqbol.eval.run import DEFAULT_OUT_DIR, run
-from saqbol.eval.splits import DEFAULT_CALIBRATION_SIZE, SPLIT_NAMES, build_and_write
+from saqbol.eval.splits import SPLIT_NAMES, build_and_write
 
 
 def _say(text: str) -> None:
@@ -63,11 +74,32 @@ def _parser() -> argparse.ArgumentParser:
     )
     splitter.add_argument("--seed", type=int, default=DEFAULT_SEED, help="assignment seed")
     splitter.add_argument(
+        "--exposure",
+        type=Path,
+        default=None,
+        help="exposure register (default: exposure.json beside the corpus directory, if present)",
+    )
+    splitter.add_argument(
         "--calibration-size",
         type=int,
-        default=DEFAULT_CALIBRATION_SIZE,
-        help="calibration rows wanted, capped at 40%% of the press pool",
+        default=None,
+        help="override the contract's calibration rule with a row count, "
+        "capped at 40%% of the fresh press pool",
     )
+    fitter = commands.add_parser(
+        "calibrate", help="fit the rules-only warning threshold on calibration data"
+    )
+    fitter.add_argument("--config", required=True, type=Path, help="matrix YAML file")
+    fitter.add_argument(
+        "--split",
+        default=None,
+        choices=sorted(REGIMES),
+        help="split to fit on (default: calibration if it has rows, else dev)",
+    )
+    fitter.add_argument(
+        "--guard", type=Path, default=DEFAULT_GUARD_DIR, help="directory of regression cases"
+    )
+    fitter.add_argument("--out", type=Path, default=DEFAULT_OUT, help="artifact path")
     return parser
 
 
@@ -106,15 +138,29 @@ def _leaderboard(args: argparse.Namespace) -> int:
 
 def _splits(args: argparse.Namespace) -> int:
     manifest = build_and_write(
-        args.corpus, args.out, seed=args.seed, calibration_size=args.calibration_size
+        args.corpus,
+        args.out,
+        seed=args.seed,
+        calibration_size=args.calibration_size,
+        exposure_path=args.exposure,
     )
     counts = ", ".join(f"{name}={manifest['splits'][name]['n']}" for name in SPLIT_NAMES)
     _say(
-        f"splits (seed {manifest['seed']}): {counts}; "
+        f"splits (seed {manifest['seed']}, {manifest['calibration']['regime']}): {counts}; "
         f"{manifest['excluded_fragments']} fragments excluded, "
         f"{manifest['groups']['n_multi_row_groups']} multi-row groups kept together"
     )
     _say(f"wrote {Path(args.out) / 'manifest.json'}")
+    return 0
+
+
+def _calibrate(args: argparse.Namespace) -> int:
+    payload = calibrate(
+        load_config(args.config), split=args.split, guard_dir=args.guard, config_path=args.config
+    )
+    for line in describe(payload):
+        _say(line)
+    _say(f"wrote {write_artifact(payload, args.out)}")
     return 0
 
 
@@ -125,6 +171,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run(args)
         if args.command == "splits":
             return _splits(args)
+        if args.command == "calibrate":
+            return _calibrate(args)
         return _leaderboard(args)
     except (ValueError, OSError) as exc:
         # A config, split or results file the run cannot use. The message

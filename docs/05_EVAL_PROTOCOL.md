@@ -35,7 +35,7 @@ Do not pad Kazakh with translations to hit a quota. The Kazakh share is whatever
 1. **Press and official sources.** Work through published warnings from the Ministry of Internal Affairs, the National Bank, the Financial Monitoring Agency, bank security pages, and awareness channels. Copy the scam text verbatim where it is quoted. Log the URL and the access date for each row.
 2. **Donated.** Bot users who tick the per-submission consent box. These land in `dataset_candidates` with `status = pending`, never straight into the dataset.
 3. **Hard negatives.** Ask friends and family to forward genuine messages from banks, delivery services, and eGov. This is the most under-collected and most valuable category. Start it in week 1, not week 3.
-4. **Synthetic.** LLM paraphrases of press rows, recorded with the seed row's ID so leakage checks can trace them. Train split only.
+4. **Synthetic.** LLM paraphrases of `dev` rows, recorded with the seed row's ID so leakage checks can trace them. Train split only.
 
 ### PII scrubbing
 
@@ -93,7 +93,7 @@ Models on the leaderboard: DeepSeek-V3, Qwen3, GPT-4o-mini, Llama-3.3-70B. Fixed
 |---|---|---|
 | Macro-F1 | Over `scam` / `legit`, and separately over the 13-way playbook label | Headline |
 | 95% CI | Bootstrap, 10,000 resamples, stratified by class | No number ships without one |
-| FPR on hard negatives | False positives divided by hard-negative count | The metric that decides whether people uninstall |
+| FPR on hard negatives | False positives divided by hard-negative count. When none or all of them are flagged, the bootstrap interval has no width, so the exact one-sided binomial bound is reported instead and marked in the table | The metric that decides whether people uninstall |
 | Abstention coverage | Share not answered `unsure` | |
 | Risk at coverage | Error rate among answered items, plotted against coverage | Proves abstention buys something |
 | Stage accuracy | Threads only | Secondary |
@@ -121,27 +121,71 @@ Each is one cell in the results table. All run on the same test rows.
 
 ## 7. Calibration
 
-The 150-row calibration split is **disjoint from every test split** and is used to fit:
+Calibration data is **disjoint from every test split** and is used to fit:
 
 - the three fusion weights
 - the band thresholds
 - the disagreement and self-consistency thresholds for abstention
 
-Report calibration-split numbers separately and label them as such. Tuning on test and reporting it as test is the most common way an evaluation loses credibility.
+Which rows it is depends on how many fresh press rows exist when collection ends. A fresh row is one collected after the system freeze and never seen during development ([contract section 6](02_DATA_CONTRACTS.md), [holdout policy](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md)).
+
+| Fresh press rows | Calibration data | Label on the run |
+|---|---|---|
+| Under 250 | The `dev` split. Every fresh row is a test row | `dev-calibrated` |
+| 250 or more | A stratified slice of the fresh rows: 20% of them, between 50 and 75 | `calibrated` |
+
+The regime follows from the row count alone and is fixed before any test result exists. The report says which one applied. Thresholds fitted on `dev` lean towards text the rules were written against, and the report says that beside the number. The earlier fixed target of 150 calibration rows assumed a corpus of 600 to 700 rows and is retired.
+
+Report calibration and `dev` numbers separately and label them as such. Tuning on test and reporting it as test is the most common way an evaluation loses credibility.
 
 Say "thresholded abstention". Only call it conformal prediction if you actually report coverage guarantees and set sizes.
+
+### The fit
+
+`python -m saqbol.eval calibrate --config eval/configs/dev.yaml` runs the fit and writes `eval/calibration/rules_only.json`. It reads the `calibration` split when that has rows and `dev` otherwise, and refuses any other split.
+
+**What is searched.** For the rules-only system only one parameter can be fitted: the `suspicious` threshold, which separates a warning from "likely safe". The candidates are 0.01 to 0.40, one per rule-score point. The ceiling is fixed by design: one critical indicator is worth 40 points and must never come out as likely safe. The `scam` threshold is not fitted, because the scoring counts `scam` and `suspicious` as the same positive answer and no gold label says which band a scam deserves. The fusion weights and the two abstention thresholds have no effect until a model runs, so they wait for the hybrid system.
+
+**Objective.** Take the candidate with the highest macro-F1 over scam and legit among the admissible ones. A candidate is admissible when all three hold:
+
+| Constraint | Value | Why |
+|---|---|---|
+| Hard-negative false positives | at most 5% of the hard negatives in the calibration data | A warning on a genuine bank or eGov message is the costly error |
+| Coverage | at least 0.80 of rows answered | Abstaining on everything must not win. The rules alone never abstain, so this binds only for model systems |
+| Regression suite | every case in `tests/fixtures/golden` keeps a band it allows | The `dev` hard negatives all score zero, because the rules were written against them. The suite holds the genuine messages that carry one real cue |
+
+Ties go to the higher threshold, which warns less.
+
+**The incumbent rule.** The current threshold is replaced only when the 95% interval of the paired macro-F1 gain lies above zero. The interval resamples source groups, not rows, so several quotes from one article count as one piece of evidence. The same rule applies when thresholds are refitted on a fresh calibration slice.
+
+**What the fit on `dev` found** (11 November 2026: 76 rows in 28 source groups, 17 hard negatives, 77 suite cases):
+
+| `suspicious` | Macro-F1 | Scams flagged | Hard negatives flagged | Suite cases broken | Admissible |
+|---|---|---|---|---|---|
+| 0.01 to 0.12 | 0.774 | 44 of 59 | 0 of 17 | 2 | no |
+| 0.13 to 0.24 | 0.677 | 36 of 59 | 0 of 17 | 1 | no |
+| 0.25 | 0.665 | 35 of 59 | 0 of 17 | 1 | no |
+| 0.26 to 0.37 | 0.548 | 25 of 59 | 0 of 17 | 0 | yes |
+| 0.38 to 0.40 | 0.486 | 20 of 59 | 0 of 17 | 0 | yes |
+
+The best admissible candidate is 0.37. Its gain over 0.40 is +0.062 macro-F1, and the interval of that gain over source groups is 0.000 to 0.111. The five extra scam rows come from two articles, four of them from one. The interval reaches zero, so the threshold stays at 0.40. The artifact records 0.37 as the best candidate by the objective, with the whole search.
+
+The 5% cap, the 0.80 floor and the incumbent rule are choices, and they can be changed until the tag `system-freeze-v0.1` exists. After it they are fixed.
+
+**The artifact** holds the selected thresholds, all 40 candidates with their counts, the objective, the comparison with its interval, digests of the calibration rows and the suite cases, the config hash, the seed, the playbook version, the code revision and the regime. A test reruns the fit and fails when the committed artifact differs from it, or when the pipeline defaults differ from the selected thresholds. Each run manifest records the weights and thresholds in force under `fusion`.
 
 ---
 
 ## 8. Reproducibility
 
-- `python -m saqbol.eval run --config eval/configs/v0.1.yaml` reproduces every number.
+- `python -m saqbol.eval run --config eval/configs/v0.1.yaml` reproduces every reported number. `eval/configs/dev.yaml` runs the same harness on the `dev` split for development numbers, which the leaderboard marks as not test results.
 - `results.json` is committed, and `leaderboard.md` is generated from it and never hand-edited.
+- `results.json` holds every number the harness computed, with the row, class, hard-negative and source-group counts behind it. The leaderboard prints a number only when those counts clear the minimum-support floors, prints "not reported" otherwise, and states the release tier (none, pilot, benchmark) in its header. The floors are in `src/saqbol/eval/support.py` and their reasoning is in [15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) section 7.
 - The prompt is versioned and its hash is recorded per row.
 - LLM responses are cached to disk by (model, prompt hash, input hash), so a rerun costs nothing and the exact responses behind a published number are inspectable.
 - CI runs the harness over 30 fixture rows using recorded cassettes, so the pipeline is proven to work on every commit without spending money.
 
-**Leakage tests in CI**: no `text_sha256` in two splits, no synthetic row derived from a test row, calibration disjoint from test. Make them fail the build.
+**Leakage tests in CI**: no `text_sha256` in two splits, no synthetic row derived from a test row, calibration disjoint from test, no source article and no near-duplicate pair in two splits, and no row from the exposure register (`data/exposure.json`) outside `dev`. Make them fail the build.
 
 ---
 

@@ -12,6 +12,13 @@ several URLs. If those copies land in different splits, the leakage tests in
 row is checked twice, exact on a normalized form and fuzzy on character
 shingles, before it is written.
 
+It also screens every new row against development data. The system was
+written while reading the batches listed in ``data/exposure.json``, so a row
+that repeats one of them, shares its article or is a variant of it cannot be a
+test row (``docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md``, section 4).
+A batch collected before the tag ``system-freeze-v0.1`` exists is development
+data too, and has to be collected with ``--dev``.
+
 This module deliberately does not scrub PII. T405 owns scrubbing. What it does
 is *flag* rows containing a phone number, an IIN, a card number or an email, so
 the scrubber gets a checklist instead of a haystack.
@@ -28,6 +35,9 @@ Usage
   # many rows from a staging file (a list of draft objects)
   python tools/collect.py ingest staging.json --batch press-01
 
+  # before the system freeze every new batch is development data
+  python tools/collect.py ingest staging.json --batch press-03 --dev
+
   # validation and duplicate sweep over everything collected so far
   python tools/collect.py check --stats
 
@@ -41,6 +51,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import unicodedata
 from datetime import UTC, date, datetime
@@ -49,6 +60,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 CORPUS_DIR = ROOT / "data" / "corpus"
+# Which batches and single rows the system was developed against. The split
+# builder reads the same file and sends everything it names to `dev`.
+EXPOSURE_PATH = ROOT / "data" / "exposure.json"
+# Rows collected after this tag are the only ones that can be test rows.
+FREEZE_TAG = "system-freeze-v0.1"
 
 # `provenance` answers "how did this row reach us", which is the question a
 # release reviewer asks. `source` on the emitted item mirrors it, because
@@ -76,6 +92,10 @@ CHANNELS = (
 TEXT_KINDS = ("message", "phrase_fragment")
 
 NEAR_DUP_THRESHOLD = 0.85
+# Between this and NEAR_DUP_THRESHOLD a new row may be a reworded copy of a
+# development row. A person has to say which; the tool will not guess.
+REVIEW_THRESHOLD = 0.50
+SIMILAR_DECISIONS = ("variant", "distinct")
 SHINGLE = 5
 
 # ---------------------------------------------------------------------------
@@ -307,6 +327,210 @@ def find_duplicate(
 
 
 # ---------------------------------------------------------------------------
+# screening against development data
+# ---------------------------------------------------------------------------
+
+# The next two functions mirror `saqbol.eval.splits`, which cannot be imported
+# here because this script runs without the project venv. A test holds the two
+# copies to the same answers.
+_KEY_RE = re.compile(
+    r"(?:parallel\s+pair\s+key|variant\s+group\s+key)\s*:\s*(?P<slug>[A-Za-z0-9_.\-]+)",
+    re.IGNORECASE,
+)
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
+
+
+def group_keys(notes: str) -> list[str]:
+    """The parallel-pair and variant-group slugs written in a notes field."""
+    return sorted({m.group("slug").lower() for m in _KEY_RE.finditer(notes or "")})
+
+
+def source_key(url: object) -> str:
+    """What two rows quoted from the same article have in common, or "" for no source."""
+    s = str(url or "").strip()
+    if not s:
+        return ""
+    s = _SCHEME_RE.sub("", s.split("#", 1)[0]).casefold()
+    if s.startswith("www."):
+        s = s[4:]
+    return s.rstrip("/")
+
+
+def load_register() -> dict[str, Any]:
+    """The exposure register, or an empty one if the file does not exist."""
+    data: dict[str, Any] = {}
+    if EXPOSURE_PATH.exists():
+        data = json.loads(EXPOSURE_PATH.read_text(encoding="utf-8"))
+    for key in ("exposed_batches", "exposed_ids", "log"):
+        data.setdefault(key, [])
+    return data
+
+
+def register_exposure(*, batches: list[str] = (), ids: list[str] = (), reason: str) -> None:
+    """Add batches or rows to the register, with a dated log entry. Never removes."""
+    register = load_register()
+    new_batches = [b for b in batches if b not in register["exposed_batches"]]
+    new_ids = [i for i in ids if i not in register["exposed_ids"]]
+    if not new_batches and not new_ids:
+        return
+    register["exposed_batches"] = sorted({*register["exposed_batches"], *new_batches})
+    register["exposed_ids"] = sorted({*register["exposed_ids"], *new_ids})
+    scope = []
+    if new_batches:
+        scope.append("batches " + ", ".join(new_batches))
+    if new_ids:
+        scope.append("rows " + ", ".join(new_ids))
+    register["log"].append(
+        {"date": date.today().isoformat(), "scope": "; ".join(scope), "reason": reason}
+    )
+    EXPOSURE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    EXPOSURE_PATH.write_text(
+        json.dumps(register, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def is_dev(row: dict[str, Any], register: dict[str, Any]) -> bool:
+    return (
+        row.get("_batch") in register["exposed_batches"] or row.get("id") in register["exposed_ids"]
+    )
+
+
+def freeze_time() -> datetime | None:
+    """When the freeze tag was made, or None if this checkout has no such tag."""
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "for-each-ref",
+                "--format=%(creatordate:iso-strict)",
+                f"refs/tags/{FREEZE_TAG}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    stamp = out.stdout.strip()
+    if out.returncode != 0 or not stamp:
+        return None
+    try:
+        return datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+
+
+def screen(row: dict[str, Any], dev_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Where a new row belongs, judged against development rows and fragments.
+
+    `pool` is "dev" when the row is tied to something the system was built on,
+    "review" when a person has to decide, and "fresh" otherwise. A new message
+    that merely contains a known cue phrase scores far below the review
+    threshold and stays fresh, which is the generalisation the rules are
+    supposed to show.
+    """
+    src = source_key(row.get("source_url"))
+    if src:
+        for other in dev_rows:
+            if source_key(other.get("source_url")) == src:
+                return {"pool": "dev", "rule": "same_source", "dev_id": other.get("id", "")}
+    keys = set(group_keys(row.get("notes", "")))
+    if keys:
+        for other in dev_rows:
+            shared = keys & set(group_keys(other.get("notes", "")))
+            if shared:
+                return {
+                    "pool": "dev",
+                    "rule": "shared_key",
+                    "dev_id": other.get("id", ""),
+                    "key": min(shared),
+                }
+    best: tuple[dict[str, Any], float] | None = None
+    for other in dev_rows:
+        score = similarity(row.get("text", ""), other.get("text", ""))
+        if score >= REVIEW_THRESHOLD and (best is None or score > best[1]):
+            best = (other, score)
+    if best is None:
+        return {"pool": "fresh"}
+    other, score = best
+    near = score >= NEAR_DUP_THRESHOLD
+    return {
+        "pool": "dev" if near else "review",
+        "rule": "near_duplicate" if near else "similar",
+        "dev_id": other.get("id", ""),
+        "score": round(score, 3),
+    }
+
+
+class NeedsDecision(Exception):
+    """A new row resembles a development row and nobody has said what it is."""
+
+    def __init__(self, finding: dict[str, Any]) -> None:
+        super().__init__(finding)
+        self.finding = finding
+
+
+def settle(row: dict[str, Any], dev_rows: list[dict[str, Any]], decision: str) -> dict[str, Any]:
+    """Screen a row and apply the collector's decision where one is needed."""
+    if decision and decision not in SIMILAR_DECISIONS:
+        raise RowError(f"similar_to_dev must be one of {SIMILAR_DECISIONS}, got {decision!r}")
+    finding = screen(row, dev_rows)
+    if finding["pool"] != "review":
+        return finding
+    if decision == "variant":
+        return {**finding, "pool": "dev", "decision": "variant"}
+    if decision == "distinct":
+        return {**finding, "pool": "fresh", "decision": "distinct"}
+    raise NeedsDecision(finding)
+
+
+def _describe(finding: dict[str, Any]) -> str:
+    if finding["pool"] == "fresh" and "rule" not in finding:
+        return "fresh"
+    detail = f"{finding['rule']} {finding.get('dev_id', '')}".strip()
+    if "score" in finding:
+        detail += f" {finding['score']:.2f}"
+    if "decision" in finding:
+        detail += f", judged {finding['decision']}"
+    return f"{finding['pool']}: {detail}"
+
+
+def collecting_as_dev(batch: str, register: dict[str, Any], *, as_dev: bool) -> bool:
+    """Whether rows added to this batch now are development data.
+
+    Without the freeze tag there is no such thing as a test row, so the
+    collector has to say out loud that the batch is development data.
+    """
+    if batch in register["exposed_batches"] or as_dev:
+        return True
+    if freeze_time() is None:
+        raise RowError(
+            f"there is no {FREEZE_TAG} tag, so a row collected now is development data. "
+            f"Pass --dev to collect it as such; the batch is then added to "
+            f"{EXPOSURE_PATH.name} and can never be a test batch."
+        )
+    return False
+
+
+def _register_outcome(
+    batch: str, register: dict[str, Any], *, batch_is_dev: bool, variants: list[tuple[str, str]]
+) -> None:
+    if batch_is_dev and batch not in register["exposed_batches"]:
+        register_exposure(
+            batches=[batch],
+            reason=f"Collected as development data: --dev was given, or no {FREEZE_TAG} tag existed.",
+        )
+    for row_id, dev_id in variants:
+        register_exposure(
+            ids=[row_id],
+            reason=f"Judged at collection to be a variant of the development row {dev_id}.",
+        )
+
+
+# ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
 
@@ -328,8 +552,11 @@ def cmd_add(args: argparse.Namespace) -> int:
         text_kind=args.text_kind,
         notes=args.notes,
     )
+    register = load_register()
+    batch_is_dev = collecting_as_dev(args.batch, register, as_dev=args.dev)
     data = load_batch(args.batch)
-    universe = load_all_rows(exclude=args.batch) + data["items"]
+    others = load_all_rows(exclude=args.batch)
+    universe = others + data["items"]
     dup = find_duplicate(row["text"], universe)
     if dup and not args.allow_dup:
         kind, other, score = dup
@@ -340,12 +567,41 @@ def cmd_add(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if batch_is_dev:
+        finding: dict[str, Any] = {"pool": "dev", "rule": "dev_batch"}
+    else:
+        try:
+            finding = settle(row, [r for r in others if is_dev(r, register)], args.similar_to_dev)
+        except NeedsDecision as need:
+            print(_undecided(need.finding, others), file=sys.stderr)
+            return 2
+    row["screening"] = finding
     data["items"].append(row)
     assign_ids(data)
     path = save_batch(data)
+    variants = [(row["id"], finding["dev_id"])] if finding.get("decision") == "variant" else []
+    _register_outcome(args.batch, register, batch_is_dev=batch_is_dev, variants=variants)
     flags = ",".join(row["pii_flags"]) or "none"
-    print(f"added {row['id']} -> {path.relative_to(ROOT)}  [pii: {flags}]")
+    print(f"added {row['id']} -> {path.relative_to(ROOT)}  [pii: {flags}]  [{_describe(finding)}]")
+    if finding["pool"] == "dev" and not batch_is_dev:
+        print(
+            f"  note: {row['id']} is development data and will not be a test row",
+            file=sys.stderr,
+        )
     return 0
+
+
+def _undecided(finding: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+    other = next((r for r in rows if r.get("id") == finding["dev_id"]), {})
+    preview = " ".join(str(other.get("text", "")).split())[:160]
+    return (
+        f"needs a decision: similarity {finding['score']:.2f} with the development row "
+        f"{finding['dev_id']}\n"
+        f"  that row: {preview}\n"
+        f"  if this is the same message reworded, say variant; it becomes development data\n"
+        f"  if it is a different message, say distinct; it stays a candidate test row\n"
+        f'  (--similar-to-dev on `add`, "similar_to_dev" on a draft)'
+    )
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -363,9 +619,14 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     else:
         drafts = raw
 
+    register = load_register()
+    batch_is_dev = collecting_as_dev(args.batch, register, as_dev=args.dev)
     data = load_batch(args.batch)
-    universe = load_all_rows(exclude=args.batch) + data["items"]
-    added = rejected = failed = 0
+    others = load_all_rows(exclude=args.batch)
+    dev_rows = [r for r in others if is_dev(r, register)]
+    universe = others + data["items"]
+    added = rejected = failed = undecided = to_dev = 0
+    pending_variants: list[tuple[dict[str, Any], str]] = []
     for i, draft in enumerate(drafts, start=1):
         merged = {**defaults, **draft}
         try:
@@ -399,6 +660,25 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             )
             rejected += 1
             continue
+        if batch_is_dev:
+            finding: dict[str, Any] = {"pool": "dev", "rule": "dev_batch"}
+        else:
+            try:
+                finding = settle(row, dev_rows, str(merged.get("similar_to_dev", "")))
+            except RowError as err:
+                print(f"  ! draft {i}: {err}", file=sys.stderr)
+                failed += 1
+                continue
+            except NeedsDecision as need:
+                print(f"  ? draft {i}: {_undecided(need.finding, others)}", file=sys.stderr)
+                undecided += 1
+                continue
+            if finding["pool"] == "dev":
+                print(f"  > draft {i}: development data ({_describe(finding)})", file=sys.stderr)
+                to_dev += 1
+        row["screening"] = finding
+        if finding.get("decision") == "variant":
+            pending_variants.append((row, finding["dev_id"]))
         data["items"].append(row)
         universe.append(row)
         added += 1
@@ -406,9 +686,19 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     assign_ids(data)
     if added:
         path = save_batch(data)
+        _register_outcome(
+            args.batch,
+            register,
+            batch_is_dev=batch_is_dev,
+            variants=[(row["id"], dev_id) for row, dev_id in pending_variants],
+        )
         print(f"{added} added -> {path.relative_to(ROOT)}")
-    print(f"summary: added={added} duplicates={rejected} invalid={failed}")
-    return 0 if failed == 0 else 1
+    pool = "all development data" if batch_is_dev else f"{to_dev} of them development data"
+    print(
+        f"summary: added={added} ({pool}) duplicates={rejected} "
+        f"invalid={failed} undecided={undecided}"
+    )
+    return 0 if failed == 0 and undecided == 0 else 1
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -458,11 +748,78 @@ def cmd_check(args: argparse.Namespace) -> int:
                 )
                 problems += 1
 
+    problems += _check_pools(rows)
+
     n_pii = sum(1 for r in rows if r.get("needs_scrub"))
     print(f"\n{len(rows)} rows, {problems} problems, {n_pii} flagged for T405 scrubbing")
     if args.stats:
         _print_stats(rows)
     return 0 if problems == 0 else 1
+
+
+def _check_pools(rows: list[dict[str, Any]]) -> int:
+    """Hold the corpus to the holdout policy. Returns the number of problems.
+
+    A row outside the exposure register is a candidate test row, so it has to
+    have been collected after the freeze tag, and any resemblance to a
+    development row has to have been ruled on.
+    """
+    register = load_register()
+    dev_rows = [r for r in rows if is_dev(r, register)]
+    fresh = [r for r in rows if not is_dev(r, register)]
+    if not fresh:
+        print(f"  pools: {len(dev_rows)} development rows, no candidate test rows")
+        return 0
+
+    problems = 0
+    frozen_at = freeze_time()
+    by_batch: dict[str, list[dict[str, Any]]] = {}
+    for row in fresh:
+        by_batch.setdefault(str(row.get("_batch", "?")), []).append(row)
+    for batch, members in sorted(by_batch.items()):
+        if frozen_at is None:
+            print(
+                f"  ! batch {batch}: {len(members)} rows are not in {EXPOSURE_PATH.name} "
+                f"and there is no {FREEZE_TAG} tag, so they cannot be test rows"
+            )
+            problems += 1
+            continue
+        early = [r for r in members if _collected_before(r, frozen_at)]
+        if early:
+            print(
+                f"  ! batch {batch}: {len(early)} rows were collected before {FREEZE_TAG} "
+                f"or carry no collection time, and are not in {EXPOSURE_PATH.name}"
+            )
+            problems += 1
+
+    to_dev = 0
+    for row in fresh:
+        finding = screen(row, dev_rows)
+        if finding["pool"] == "dev":
+            to_dev += 1
+        elif finding["pool"] == "review":
+            ruling = (row.get("screening") or {}).get("decision")
+            if ruling != "distinct":
+                print(
+                    f"  ! {row.get('id')}: similarity {finding['score']:.2f} with the "
+                    f"development row {finding['dev_id']} and no decision recorded"
+                )
+                problems += 1
+    print(
+        f"  pools: {len(dev_rows)} development rows, {len(fresh)} candidate test rows "
+        f"({to_dev} of them tied to development data; the split builder sends those to dev)"
+    )
+    return problems
+
+
+def _collected_before(row: dict[str, Any], moment: datetime) -> bool:
+    try:
+        stamp = datetime.fromisoformat(str(row.get("collected_at", "")))
+    except ValueError:
+        return True
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return stamp <= moment
 
 
 def _print_stats(rows: list[dict[str, Any]]) -> None:
@@ -534,6 +891,9 @@ def cmd_stats(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+_DEV_HELP = "collect this batch as development data and add it to the exposure register"
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="collect.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -557,11 +917,19 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--notes", default="")
     a.add_argument("--batch", required=True)
     a.add_argument("--allow-dup", action="store_true")
+    a.add_argument("--dev", action="store_true", help=_DEV_HELP)
+    a.add_argument(
+        "--similar-to-dev",
+        default="",
+        choices=("", *SIMILAR_DECISIONS),
+        help="your ruling when the row resembles a development row",
+    )
     a.set_defaults(func=cmd_add)
 
     i = sub.add_parser("ingest", help="add many rows from a staging JSON file")
     i.add_argument("file")
     i.add_argument("--batch", required=True)
+    i.add_argument("--dev", action="store_true", help=_DEV_HELP)
     i.set_defaults(func=cmd_ingest)
 
     c = sub.add_parser("check", help="validate and sweep for duplicates")

@@ -1,0 +1,18 @@
+{
+  "policy": "docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md",
+  "exposed_batches": [
+    "negatives-01",
+    "official-01",
+    "official-02",
+    "press-01",
+    "press-02"
+  ],
+  "exposed_ids": [],
+  "log": [
+    {
+      "date": "2026-11-11",
+      "scope": "batches negatives-01, official-01, official-02, press-01, press-02",
+      "reason": "Collected before any system freeze. Every message in them was read in one error listing before the rules were revised, so all of them are development data."
+    }
+  ]
+}

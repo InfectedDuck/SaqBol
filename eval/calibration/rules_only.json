@@ -1,0 +1,920 @@
+{
+  "schema": "saqbol-calibration/1",
+  "system": "rules_only",
+  "model": "none",
+  "prompt_hash": null,
+  "playbooks": "none: the rules-only system reads no playbook",
+  "regime": "dev-calibrated",
+  "created_at": "2026-11-10T18:38:55Z",
+  "code": {
+    "git_commit": "41caa9e72b6732c52abb5d17861fbfb6962fdad8",
+    "inputs_differ_from_commit": true
+  },
+  "config": {
+    "name": "kazscam-dev",
+    "path": "eval/configs/dev.yaml",
+    "hash": "sha256:389a1959861077e554734c61963986d58d1867be6268b01ac20864928adbb5d4",
+    "positive_bands": [
+      "scam",
+      "suspicious"
+    ]
+  },
+  "seed": 20260908,
+  "n_bootstrap": 10000,
+  "data": {
+    "split": "dev",
+    "path": "data/kazscam_v0.1/dev.jsonl",
+    "digest": "sha256:146f417dd28390d0af61da46a3803576b022275f4c719866e7bb66f6264f3b20",
+    "n_rows": 76,
+    "by_label": {
+      "legit": 17,
+      "scam": 59
+    },
+    "by_lang": {
+      "kk": 28,
+      "ru": 48
+    },
+    "n_hard_negative": 17,
+    "n_source_groups": 28
+  },
+  "guard": {
+    "path": "tests/fixtures/golden",
+    "digest": "sha256:972984e56e5f231165d8c990bec8dd3f8680865667de6bf1bd2538d376347a87",
+    "n_cases": 77,
+    "left_out": [
+      "hard_negatives.yaml::scam_warning_headline_pasted"
+    ]
+  },
+  "objective": {
+    "maximise": "macro_f1 over scam and legit",
+    "max_fpr_hard_negative": 0.05,
+    "min_coverage": 0.8,
+    "guard": "every regression case keeps a band it allows",
+    "ties": "the higher threshold",
+    "incumbent_rule": "the incumbent is replaced only when the interval of the paired macro-F1 gain, resampling source groups, lies above zero",
+    "alpha": 0.05
+  },
+  "search": {
+    "parameter": "thresholds.suspicious",
+    "from": 0.01,
+    "to": 0.4,
+    "step": 0.01,
+    "ceiling": "one critical indicator must never be likely safe",
+    "not_fitted": {
+      "thresholds.scam": "It separates `scam` from `suspicious`, which the scoring counts as the same positive answer, and no gold label says which band a scam message deserves.",
+      "weights.rule, weights.llm": "With no model judgement the rule score is the whole risk, so the weights cancel.",
+      "thresholds.disagreement, thresholds.self_consistency": "They decide abstention between the rules and a model; the rules alone never abstain.",
+      "thresholds.sample_lo, thresholds.sample_hi, thresholds.retrieval_floor": "They control model sampling and which script is named; neither changes the band of a rules-only verdict."
+    }
+  },
+  "incumbent": {
+    "suspicious": 0.4,
+    "scam": 0.7
+  },
+  "candidates": [
+    {
+      "suspicious": 0.01,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.02,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.03,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.04,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.05,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.06,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.07,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.08,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.09,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.1,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.11,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.12,
+      "macro_f1": 0.774123,
+      "per_class_f1": {
+        "legit": 0.693878,
+        "scam": 0.854369
+      },
+      "n_scam_flagged": 44,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::kazpost_pickup_notice",
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 2 regression cases would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.13,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.14,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.15,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.16,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.17,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.18,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.19,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.2,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.21,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.22,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.23,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.24,
+      "macro_f1": 0.677193,
+      "per_class_f1": {
+        "legit": 0.596491,
+        "scam": 0.757895
+      },
+      "n_scam_flagged": 36,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.25,
+      "macro_f1": 0.665444,
+      "per_class_f1": {
+        "legit": 0.586207,
+        "scam": 0.744681
+      },
+      "n_scam_flagged": 35,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [
+        "hard_negatives.yaml::egov_1414_code_sms"
+      ],
+      "admissible": false,
+      "rejected": [
+        "guard: 1 regression case would leave the allowed band"
+      ]
+    },
+    {
+      "suspicious": 0.26,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.27,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.28,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.29,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.3,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.31,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.32,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.33,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.34,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.35,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.36,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.37,
+      "macro_f1": 0.547619,
+      "per_class_f1": {
+        "legit": 0.5,
+        "scam": 0.595238
+      },
+      "n_scam_flagged": 25,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.38,
+      "macro_f1": 0.486041,
+      "per_class_f1": {
+        "legit": 0.465753,
+        "scam": 0.506329
+      },
+      "n_scam_flagged": 20,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.39,
+      "macro_f1": 0.486041,
+      "per_class_f1": {
+        "legit": 0.465753,
+        "scam": 0.506329
+      },
+      "n_scam_flagged": 20,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    },
+    {
+      "suspicious": 0.4,
+      "macro_f1": 0.486041,
+      "per_class_f1": {
+        "legit": 0.465753,
+        "scam": 0.506329
+      },
+      "n_scam_flagged": 20,
+      "n_scam": 59,
+      "n_false_positive": 0,
+      "n_hard_negative": 17,
+      "fpr_upper_bound": 0.161566,
+      "coverage": 1.0,
+      "guard_failures": [],
+      "admissible": true,
+      "rejected": []
+    }
+  ],
+  "best_by_objective": {
+    "suspicious": 0.37,
+    "macro_f1": 0.547619,
+    "per_class_f1": {
+      "legit": 0.5,
+      "scam": 0.595238
+    },
+    "n_scam_flagged": 25,
+    "n_scam": 59,
+    "n_false_positive": 0,
+    "n_hard_negative": 17,
+    "fpr_upper_bound": 0.161566,
+    "coverage": 1.0,
+    "guard_failures": [],
+    "admissible": true,
+    "rejected": []
+  },
+  "comparison": {
+    "challenger": 0.37,
+    "incumbent": 0.4,
+    "delta_macro_f1": 0.061578,
+    "ci95": [
+      0.0,
+      0.111456
+    ],
+    "resampled": "source groups",
+    "n_groups": 28,
+    "n_resamples": 10000,
+    "decisive": false
+  },
+  "selected": {
+    "thresholds": {
+      "suspicious": 0.4,
+      "scam": 0.7
+    },
+    "reason": "The best candidate gains +0.062 macro-F1 over the incumbent, but the interval of that gain over source groups, [+0.000, +0.111], reaches zero: the gain rests on too few sources to tell from chance, so the incumbent stays.",
+    "macro_f1": 0.486041,
+    "per_class_f1": {
+      "legit": 0.465753,
+      "scam": 0.506329
+    },
+    "n_scam_flagged": 20,
+    "n_scam": 59,
+    "n_false_positive": 0,
+    "n_hard_negative": 17,
+    "fpr_upper_bound": 0.161566,
+    "coverage": 1.0
+  },
+  "confirmation": {
+    "messages": 153,
+    "pipeline_agrees_with_search": true
+  }
+}
