@@ -52,6 +52,19 @@ cases:
       must_not_hit_families: [A, E, G]
     note: A pickup code that is stated, not requested.
 
+  - id: pickup_code_told_to_staff
+    lang_hint: ru
+    channel: sms
+    text: "CDEK: заказ 1000000001 доставлен в ПВЗ Алматы, ул. Примерная 5. Код получения 4821, назовите его сотруднику пункта выдачи."
+    expect:
+      band_in: [likely_safe]
+      playbook_id: null
+      must_not_hit_families: [A, E, G]
+    note: >-
+      "Код ..., назовите его" is also how a scam asks for a code that is about to
+      arrive. Here the message carries the code, so the digits stand between the
+      noun and the verb and the request rule must stay silent.
+
   - id: egov_1414_code_sms
     lang_hint: ru
     channel: sms

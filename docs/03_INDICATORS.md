@@ -11,6 +11,7 @@ This layer is the `rules_only` row on the leaderboard. It must work with no netw
 - Every hit carries at least one evidence span, except metadata indicators (family I) which carry a `detail` dict instead.
 - Russian patterns below are drawn from published Kazakh police and bank warnings and from press coverage. **Kazakh patterns are drafts. Toktar must verify and expand every `kk` line before week 3.** Mark unverified entries with `# TODO-kk` in code so a grep finds them.
 - Match case-insensitively on the NFKC-normalized, zero-width-stripped string. Use word-boundary-aware regex, not naive substring, or "код" will match inside "кодекс".
+- Phrase syntax. Words of a phrase must be adjacent, separated by whitespace; quotation marks around a word do not break the phrase, so `защищенн* счет*` matches «защищённый» счёт. A trailing `*` allows up to four more letters. A `~` between two words allows up to two other words and commas between them, within one sentence: `назов* ~ код` matches `назовите мне, пожалуйста, код`. Use `~` only where both words are specific; a loose pair is a false positive on a genuine message.
 
 ---
 
@@ -176,6 +177,8 @@ Applied in `fuse.py` after individual scoring. Each adds a flat bonus, capped so
 | `E1.safe_account` **and** any B-family hit | +15 | The safe-account fiction only works under pressure |
 | `F1` or `F2` **and** any C-family hit | +20 | Remote access plus claimed authority is near-conclusive |
 | Any G-family hit **and** `C6.courier_post` | +10 | The delivery-link pattern |
+| `H3.unsolicited_prize` **and** `E7.upfront_fee` | +10 | A prize that has to be paid for is the advance-fee pattern |
+| `J2.relative_in_trouble` or `J3.hijacked_account_ask` **and** `B1.urgency` | +10 | A known contact in trouble who needs money now is the hijacked-account script. A real relative can write the same words, which is why the result is a warning to call them back and not a scam verdict |
 
 ---
 

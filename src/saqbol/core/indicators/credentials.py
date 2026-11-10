@@ -32,13 +32,25 @@ keyword_indicator(
         # says about the code it carries, so matching them puts every real
         # one-time-password SMS into the scam band. What separates the scam is
         # the imperative: someone is asking you to hand the code over.
-        # ru
-        "назов* код",
-        "продиктуй* код",
+        # ru. The gap admits "назовите мне, пожалуйста, код". It is given only
+        # to verb forms that cannot be read as a noun or a participle:
+        # "сообщ* ~ код" would match "в сообщении указан код", which is what a
+        # genuine message says.
+        "назов* ~ код",
+        "продиктуй* ~ код",
+        "скаж* ~ код",
+        "сообщите ~ код",
+        "перешлите ~ код",
         "сообщ* код",
-        "скаж* код",
         "отправ* код",
         "перешл* код",
+        # The code is named first and asked for after: "придёт SMS, в котором
+        # указан код, назовите его". A message that carries its own code puts
+        # digits between the two words, and digits end the gap.
+        "код ~ назовите",
+        "код ~ продиктуйте",
+        "код ~ сообщите",
+        "код ~ скажите",
         "какой код",
         "код из смс",
         "код из сообщени*",

@@ -66,6 +66,22 @@ class TestCombinationBonuses:
         fired = combination_bonuses([hit("G5.brand_mismatch"), hit("C6.courier_post")])
         assert ("delivery_link", 10) in fired
 
+    def test_a_prize_that_must_be_paid_for(self):
+        fired = combination_bonuses(
+            [hit("H3.unsolicited_prize", Severity.MEDIUM), hit("E7.upfront_fee")]
+        )
+        assert ("prize_with_fee", 10) in fired
+        assert not combination_bonuses([hit("H3.unsolicited_prize"), hit("B1.urgency")])
+
+    def test_a_known_contact_who_needs_money_now(self):
+        for ask in ("J2.relative_in_trouble", "J3.hijacked_account_ask"):
+            fired = combination_bonuses([hit(ask), hit("B1.urgency", Severity.MEDIUM)])
+            assert ("known_contact_under_pressure", 10) in fired
+        # Urgency specifically: a threat to block an account is another script.
+        assert not combination_bonuses(
+            [hit("J3.hijacked_account_ask"), hit("B2.account_block_threat")]
+        )
+
     def test_several_can_fire_together(self):
         fired = combination_bonuses(
             [

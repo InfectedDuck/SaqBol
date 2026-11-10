@@ -204,6 +204,63 @@ def test_negation_is_checked_in_both_directions():
 
 
 # --------------------------------------------------------------------------
+# Requests written with a word, a comma or quotation marks inside the phrase.
+# --------------------------------------------------------------------------
+
+SPACED_REQUESTS = {
+    "A1.otp_request": [
+        "Назовите мне код, который пришёл",
+        "Продиктуйте, пожалуйста, код",
+        "Скажите мне, пожалуйста, код из сообщения",
+        "На ваш телефон придет SMS, в котором указан код, назовите его",
+        "Сейчас придёт код, продиктуйте его оператору",
+    ],
+    "E1.safe_account": [
+        "Нужно перевести деньги на “защищённый” счёт",
+        "Переведите средства на «безопасный» счёт",
+    ],
+    "E2.transfer_to_person": ["Чтобы сохранить деньги, переведите их на другой счёт"],
+    "J3.hijacked_account_ask": ["Привет! Проголосуй, пожалуйста, за Настю - это моя племянница"],
+    "B2.account_block_threat": [
+        "Ваша карточка заблокирована",
+        "Ваша карта заблокирована",
+        "Ваш счёт заблокирован",
+    ],
+    "B4.money_at_risk": ["Кто-то проводит подозрительные транзакции по вашей карточке"],
+    "C6.courier_post": [
+        "Почта Казахстана: ваша посылка прибыла на склад, но не может быть доставлена",
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    ("indicator_id", "text"),
+    [(rule, text) for rule, texts in sorted(SPACED_REQUESTS.items()) for text in texts],
+)
+def test_a_request_is_found_with_words_or_quotes_inside_it(indicator_id, text):
+    _, hits = analyse(text)
+    assert indicator_id in fired(hits), f"{text!r} fired {fired(hits)}"
+
+
+#: What the wider request forms must not reach: a code the message itself
+#: carries, a code that is only mentioned, and a warning not to share one.
+NOT_A_REQUEST = [
+    "CDEK: заказ готов к выдаче. Код получения 4821, назовите его сотруднику пункта выдачи.",
+    "В сообщении указан код для входа в приложение.",
+    "Вам отправлено сообщение, в нём код. Никому его не сообщайте.",
+    "Код 4821. Никому не называйте его, даже сотрудникам банка.",
+    "Никому не называйте этот код.",
+    "Скажите, пожалуйста, код от домофона",
+]
+
+
+@pytest.mark.parametrize("text", NOT_A_REQUEST)
+def test_a_carried_or_mentioned_code_is_not_a_request(text):
+    _, hits = analyse(text)
+    assert not [h for h in hits if h.indicator_id.startswith("A")], f"{text!r} fired {fired(hits)}"
+
+
+# --------------------------------------------------------------------------
 # Positives that must clear the threshold end to end.
 # --------------------------------------------------------------------------
 

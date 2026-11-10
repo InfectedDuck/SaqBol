@@ -212,6 +212,7 @@ The tool never asks for a code, a card number, or a phone number. Screenshots ar
 | [docs/10_REMAINING_ROADMAP.md](docs/10_REMAINING_ROADMAP.md) | Remaining work, budget, dependencies and release gates (revised 11 November 2026) |
 | [docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) | What the corpus contains today, and how a test set the system was not built on gets collected |
 | [docs/17_P07_PILOT_PREPARATION_2026-11-11.md](docs/17_P07_PILOT_PREPARATION_2026-11-11.md) | The annotation pilot: the 30 messages, what the labelling page guarantees, and how agreement is computed |
+| [docs/18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md](docs/18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md) | The last revision of the rules before the freeze: what they missed on the development messages, what changed, and what was left open |
 | [docs/PARALLEL_LANES.md](docs/PARALLEL_LANES.md), [docs/11_CODEX_MINI_PLANS.md](docs/11_CODEX_MINI_PLANS.md) | How the implementation work was split into tasks for AI coding assistants |
 
 ## Contributing

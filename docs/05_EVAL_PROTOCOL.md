@@ -158,17 +158,17 @@ Ties go to the higher threshold, which warns less.
 
 **The incumbent rule.** The current threshold is replaced only when the 95% interval of the paired macro-F1 gain lies above zero. The interval resamples source groups, not rows, so several quotes from one article count as one piece of evidence. The same rule applies when thresholds are refitted on a fresh calibration slice.
 
-**What the fit on `dev` found** (11 November 2026: 76 rows in 28 source groups, 17 hard negatives, 77 suite cases):
+**What the fit on `dev` found** (11 November 2026, after the [phrase revision of that day](18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md): 76 rows in 28 source groups, 17 hard negatives, 78 suite cases):
 
 | `suspicious` | Macro-F1 | Scams flagged | Hard negatives flagged | Suite cases broken | Admissible |
 |---|---|---|---|---|---|
-| 0.01 to 0.12 | 0.774 | 44 of 59 | 0 of 17 | 2 | no |
-| 0.13 to 0.24 | 0.677 | 36 of 59 | 0 of 17 | 1 | no |
-| 0.25 | 0.665 | 35 of 59 | 0 of 17 | 1 | no |
-| 0.26 to 0.37 | 0.548 | 25 of 59 | 0 of 17 | 0 | yes |
-| 0.38 to 0.40 | 0.486 | 20 of 59 | 0 of 17 | 0 | yes |
+| 0.01 to 0.12 | 0.883 | 52 of 59 | 0 of 17 | 2 | no |
+| 0.13 to 0.24 | 0.737 | 41 of 59 | 0 of 17 | 1 | no |
+| 0.25 | 0.713 | 39 of 59 | 0 of 17 | 1 | no |
+| 0.26 to 0.37 | 0.572 | 27 of 59 | 0 of 17 | 0 | yes |
+| 0.38 to 0.40 | 0.548 | 25 of 59 | 0 of 17 | 0 | yes |
 
-The best admissible candidate is 0.37. Its gain over 0.40 is +0.062 macro-F1, and the interval of that gain over source groups is 0.000 to 0.111. The five extra scam rows come from two articles, four of them from one. The interval reaches zero, so the threshold stays at 0.40. The artifact records 0.37 as the best candidate by the objective, with the whole search.
+The best admissible candidate is 0.37. Its gain over 0.40 is +0.024 macro-F1, and the interval of that gain over source groups is 0.000 to 0.050. The two extra scam rows come from one article. The interval reaches zero, so the threshold stays at 0.40. The first fit of the day, before the phrase revision, gave the same answer: 0.37 was the best candidate at +0.062, interval 0.000 to 0.111, and 0.40 scored 0.486 with 20 of 59 flagged. The artifact records 0.37 as the best candidate by the objective, with the whole search.
 
 The 5% cap, the 0.80 floor and the incumbent rule are choices, and they can be changed until the tag `system-freeze-v0.1` exists. After it they are fixed.
 

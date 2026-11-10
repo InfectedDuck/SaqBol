@@ -14,9 +14,12 @@ Two ways to register:
 Phrase syntax is deliberately small and transparent, because a reviewer has to
 be able to read the rules and a paper has to be able to describe them:
 
-    "код из смс"        words separated by any whitespace run
+    "код из смс"        words separated by any whitespace run; quotation marks
+                        around a word do not break the phrase
     "безопасн* счет*"   a trailing star allows up to four more letters, which
                         covers Russian and Kazakh inflection without a stemmer
+    "назов* ~ код"      a tilde allows up to two other words, and commas,
+                        between its neighbours, inside one sentence
 """
 
 from __future__ import annotations
@@ -140,6 +143,21 @@ def indicator(
 
 _HAN = re.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}]")
 
+#: Between two adjacent words: whitespace, and the quotation marks a writer puts
+#: around one of them. The safe-account phrase usually arrives as «безопасный»
+#: счёт, scare quotes included.
+_QUOTES = '"«»“”„‟'
+_SEPARATOR = rf"[\s{_QUOTES}]+"
+
+#: What a "~" stands for: up to two other words, with commas and dashes, on one
+#: line and with no sentence end. "Проголосуй, пожалуйста, за Настю" is the same
+#: request as "проголосуй за Настю". Digits are not words, so a phrase cannot
+#: reach across a code or an amount.
+GAP = "~"
+_GAP_FILL = rf"[ \t,;:\-–—{_QUOTES}]+"
+_GAP_WORD = r"\p{L}+(?:-\p{L}+)*"
+_GAP_PATTERN = rf"(?:{_GAP_FILL}{_GAP_WORD}){{0,2}}{_GAP_FILL}"
+
 
 @lru_cache(maxsize=2048)
 def compile_phrase(phrase: str) -> re.Pattern:
@@ -155,13 +173,22 @@ def compile_phrase(phrase: str) -> re.Pattern:
     are matched without boundary assertions.
     """
     words = phrase.strip().split()
-    parts = []
+    if not words or words[0] == GAP or words[-1] == GAP:
+        raise ValueError(f"phrase {phrase!r} must begin and end with a word")
+    body = ""
+    joiner = ""
     for word in words:
+        if word == GAP:
+            if joiner == _GAP_PATTERN:
+                raise ValueError(f"phrase {phrase!r} has two gaps in a row")
+            joiner = _GAP_PATTERN
+            continue
+        body += joiner
         if word.endswith("*"):
-            parts.append(re.escape(word[:-1]) + r"\p{L}{0,4}")
+            body += re.escape(word[:-1]) + r"\p{L}{0,4}"
         else:
-            parts.append(re.escape(word))
-    body = r"\s+".join(parts)
+            body += re.escape(word)
+        joiner = _SEPARATOR
     if _HAN.search(phrase):
         return re.compile(body)
     return re.compile(rf"(?<!\p{{L}}){body}(?!\p{{L}})")

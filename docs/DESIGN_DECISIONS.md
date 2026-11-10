@@ -119,8 +119,9 @@ On 11 November 2026 the caveat became a rule. All 76 messages are listed in
 `data/exposure.json`, the split builder sends them to `dev`, and the
 `calibration` and `test_press` files stay empty until rows collected after
 the system freeze fill them. The counts above are therefore development
-numbers, and so is the rules-only macro-F1 of 0.486 on `dev` that
-`eval/configs/dev.yaml` produces. The audit and the policy are in
+numbers, and so is the rules-only macro-F1 on `dev` that
+`eval/configs/dev.yaml` produces: 0.486 at the first fit that day, 0.548 after the
+phrase revision described below. The audit and the policy are in
 [the P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md).
 
 The same day the threshold question was put to the data
@@ -129,8 +130,8 @@ The same day the threshold question was put to the data
 that the threshold stays at 0.40.
 
 A threshold of 0.25 or lower would flag any message carrying one
-high-severity cue. It would catch 35 of the 59 `dev` scam messages, up from
-20, and no `dev` hard negative would be flagged. That second figure is not
+high-severity cue. It would catch 39 of the 59 `dev` scam messages, up from
+25, and no `dev` hard negative would be flagged. That second figure is not
 evidence: every `dev` hard negative scores zero, because the rules were
 written against them. The regression suite is the evidence. It holds a
 genuine eGov message, "1414: Код подтверждения 8391 для входа на портал
@@ -139,18 +140,31 @@ scores 25.
 Flagging it is the error the product must not make, so every threshold of
 0.25 or lower is ruled out.
 
-Between 0.26 and 0.37 the suite holds and five more scam messages are
-caught, each with one high-severity and one medium cue. The gain is +0.062
-macro-F1. Four of
-the five come from one article and the fifth from another, and the interval
-of the gain over source groups runs from 0.000 to 0.111. Two articles are
-not enough to move a threshold that every later number depends on.
+Between 0.26 and 0.37 the suite holds and two more scam messages are
+caught, each with one high-severity and one medium cue. The gain is +0.024
+macro-F1. Both come from one article, and the interval of the gain over
+source groups runs from 0.000 to 0.050. One article is not enough to move
+a threshold that every later number depends on.
 
-The misses are a coverage problem more than a threshold problem. Of the 59
-scam messages, 15 fire no rule at all and 8 fire a single medium cue. No
-threshold reaches those without flagging ordinary messages; a model
-judgement or more phrases might, and the phrase lists are frozen with the
-rest of the system at the tag `system-freeze-v0.1`.
+The misses are a coverage problem more than a threshold problem. The first
+fit that day showed it: at 0.40 the rules flagged 20 of the 59 scam
+messages, 15 fired no rule at all and 8 fired a single medium cue. No
+threshold reaches those without flagging ordinary messages. More phrases
+might, and the phrase lists are frozen with the rest of the system at the
+tag `system-freeze-v0.1`, so they were revised once more before it
+([record](18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md)). Phrases may now carry
+quotation marks and a gap of up to two words, a handful of missing forms
+were added, and two pairs of cues that make up a script earn a bonus. The
+figures in the paragraphs above are from the fit after that revision: 25
+of 59 flagged, 7 with no rule, 11 with a single medium cue.
+
+The gain is small and should be read as small. The five newly flagged
+messages come from three articles that each already had a flagged message,
+and the rules were revised while reading these same rows. Twelve messages
+still carry one high-severity cue and nothing else. Regrading such cues
+would reach them, and `dev` cannot say what that would cost: its
+legitimate messages fire no rule at all. That decision is left open in
+the record.
 
 ## 5. What the cue-masked ablation controls for
 

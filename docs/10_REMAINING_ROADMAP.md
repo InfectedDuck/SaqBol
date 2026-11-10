@@ -20,13 +20,14 @@ Checked on 11 November 2026: 1,468 offline tests pass, 22 are skipped and 2 are 
 | P06 corpus audit and holdout design | done | [P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) |
 | P16 holdout policy in the tooling | done | Contract, split builder, collector screening, the exact bound for hard-negative false positives, support floors, source-group counts and the release tier in the leaderboard, with tests and a development config |
 | P11 calibration and freeze | rules-only fit done; the hybrid fit is blocked on a provider key; the freeze tag waits for the owner | `eval/calibration/rules_only.json`: the `suspicious` threshold stays at 0.40 ([protocol section 7](05_EVAL_PROTOCOL.md)) |
+| Rule coverage before the freeze | done on `dev`; four questions open for the owner | [record](18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md): phrases may carry quotation marks and a gap, missing forms added, two combinations. 25 of 59 `dev` scam messages flagged, up from 20; no hard negative flagged |
 | P07 annotation pilot | batch and agreement tool ready; labelling blocked: two co-annotators | [P07 record](17_P07_PILOT_PREPARATION_2026-11-11.md): 30 `dev` messages drawn, agreement computed from the page's export. No label exists yet |
 | P08 live pilot | blocked: a host and a bot token | — |
 | P09 to P15 | not started | In the order below |
 
 Three facts shape the rest of the plan:
 
-- **There is no test set yet.** All 76 usable messages were read while the rules were written. They are now the `dev` split, and `test_press` is empty until new rows are collected ([P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md)). The only number that exists is a development number: rules-only macro-F1 of 0.486 on `dev`.
+- **There is no test set yet.** All 76 usable messages were read while the rules were written. They are now the `dev` split, and `test_press` is empty until new rows are collected ([P06 record](15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md)). The only number that exists is a development number: rules-only macro-F1 of 0.548 on `dev`, from rules revised against those same rows.
 - **No model has been called.** The hybrid and zero-shot systems are built and unit-tested against fake transports only.
 - **Nothing is deployed.**
 

@@ -148,6 +148,20 @@ COMBINATIONS: tuple[Combination, ...] = (
         frozenset({"C6.courier_post"}),
         "A courier claim carrying a risky link is the delivery-link pattern",
     ),
+    Combination(
+        "prize_with_fee",
+        10,
+        frozenset({"H3.unsolicited_prize"}),
+        frozenset({"E7.upfront_fee"}),
+        "A prize that has to be paid for is the advance-fee pattern",
+    ),
+    Combination(
+        "known_contact_under_pressure",
+        10,
+        frozenset({"J2.relative_in_trouble", "J3.hijacked_account_ask"}),
+        frozenset({"B1.urgency"}),
+        "A known contact in trouble who needs money now is the hijacked-account script",
+    ),
 )
 
 

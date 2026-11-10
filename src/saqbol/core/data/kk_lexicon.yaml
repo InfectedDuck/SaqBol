@@ -31,6 +31,10 @@
 #                     "кодты маған айтыңыз" needs its own line. The common
 #                     intervening words (маған, бізге) are listed where they
 #                     matter.
+#   "~"               between two words, allows up to two other words and
+#                     commas, on one line. No Kazakh phrase uses it yet, and
+#                     family A must not: a gap would let a request verb reach a
+#                     noun across the words that negate it (decision 2 below).
 #
 # Two decisions that shaped this file
 # -----------------------------------
@@ -216,6 +220,10 @@ phrases:
     - "күдікті операция*"       # code-switched: операция stays Russian
     - "күдікті әрекет*"
     - "күдікті аударым*"
+    - "күмәнді транзакция*"     # VERIFY-kk: taken as written from a published
+                                # warning ("күмәнді транзакциялар жүргізіп
+                                # жатыр"). Check that күмәнді is as usual here
+                                # as күдікті.
     - "рұқсатсыз кір*"          # рұқсатсыз кіру тіркелді
     - "рұқсатсыз операция*"
     - "рұқсатсыз аударым*"
@@ -263,6 +271,12 @@ phrases:
     - "кеден* төлем*"               # кеден төлемін
     - "жеткізу* төле*"              # жеткізуді төлеңіз
     - "жеткізу мүмкін болмады"
+    - "жеткізу мүмкін емес"         # VERIFY-kk: the present-tense form, as
+                                    # written in two published examples of the
+                                    # parcel SMS. Check that a genuine Kazpost
+                                    # notice does not use it.
+    - "қазақстан пошта*"            # "Қазақстан пошта қызметі", the signature
+                                    # on the same SMS
     - "жеткізе алмадық"
     - "курьер* қызмет*"
     # VERIFY-kk: the earlier draft was the single word "жеткізу" (delivery).

@@ -51,6 +51,60 @@ class TestPhraseCompilation:
         pattern = reg.compile_phrase("счет*")
         assert not pattern.search("счетоводственный")
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "переведите на «защищенный» счет",
+            "переведите на “защищенный” счет",
+            'переведите на "защищенный" счет',
+            "переведите на „защищенный“ счет",
+        ],
+    )
+    def test_quotation_marks_do_not_break_a_phrase(self, text):
+        assert reg.compile_phrase("защищенн* счет*").search(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "назовите код",
+            "назовите мне код",
+            "назовите, пожалуйста, код",
+            "назовите мне, пожалуйста, код",
+            "назовите — пожалуйста — код",
+        ],
+    )
+    def test_a_gap_admits_up_to_two_words_and_commas(self, text):
+        assert reg.compile_phrase("назов* ~ код").search(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "назовите мне прямо сейчас код",  # three words
+            "назовите имя. Код придет позже",  # a sentence end
+            "назовите имя\nкод придет позже",  # a line break
+            "назовите сумму 5000 код",  # digits are not words
+            "назовитекод",
+        ],
+    )
+    def test_a_gap_stops_at_three_words_a_sentence_end_and_digits(self, text):
+        assert not reg.compile_phrase("назов* ~ код").search(text)
+
+    def test_a_gap_is_only_where_it_is_written(self):
+        pattern = reg.compile_phrase("переведите ~ на счет")
+        assert pattern.search("переведите их на счет")
+        assert not pattern.search("переведите их на другой счет")
+        assert reg.compile_phrase("переведите ~ на ~ счет").search("переведите их на другой счет")
+
+    def test_words_on_both_sides_of_a_gap_keep_their_boundaries(self):
+        pattern = reg.compile_phrase("код ~ назовите")
+        assert pattern.search("указан код, назовите его")
+        assert not pattern.search("гражданский кодекс, назовите статью")
+
+    @pytest.mark.parametrize("phrase", ["~ код", "код ~", "назов* ~ ~ код", "", "   "])
+    def test_a_malformed_phrase_is_rejected(self, phrase):
+        with pytest.raises(ValueError):
+            reg.compile_phrase(phrase)
+
 
 class TestFolding:
     def test_yo_and_case_are_folded(self):
