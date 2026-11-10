@@ -149,7 +149,7 @@ Set `DEEPSEEK_API_KEY` or `DASHSCOPE_API_KEY` in `.env` to switch the pipeline f
 
 ## Testing
 
-- 1,520+ Python tests. All of them run with no network and no API keys.
+- 1,640+ Python tests. All of them run with no network and no API keys.
 - Golden cases for each of the 13 scam scripts in Russian, Kazakh and mixed Russian-Kazakh text, plus Chinese for the China scripts; 25 genuine messages that must not be flagged; and a set of prompt-injection attempts.
 - CI on every push: lint, format check, tests with coverage, and an offline evaluation run from config to leaderboard. For the web app: typecheck, component tests, a production build, and a smoke test of every sample page in all four languages.
 
@@ -213,6 +213,7 @@ The tool never asks for a code, a card number, or a phone number. Screenshots ar
 | [docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md](docs/15_P06_CORPUS_AUDIT_AND_HOLDOUT_2026-11-11.md) | What the corpus contains today, and how a test set the system was not built on gets collected |
 | [docs/17_P07_PILOT_PREPARATION_2026-11-11.md](docs/17_P07_PILOT_PREPARATION_2026-11-11.md) | The annotation pilot: the 30 messages, what the labelling page guarantees, and how agreement is computed |
 | [docs/18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md](docs/18_PRE_FREEZE_RULE_COVERAGE_2026-11-11.md) | The last revision of the rules before the freeze: what they missed on the development messages, what changed, and what was left open |
+| [docs/19_LABEL_PIPELINE_2026-11-11.md](docs/19_LABEL_PIPELINE_2026-11-11.md) | How two annotators' answers become a label: batches, agreement, logged decisions, label records, and the rule that withholds a test number until every test row was read twice |
 | [docs/PARALLEL_LANES.md](docs/PARALLEL_LANES.md), [docs/11_CODEX_MINI_PLANS.md](docs/11_CODEX_MINI_PLANS.md) | How the implementation work was split into tasks for AI coding assistants |
 
 ## Contributing

@@ -137,7 +137,7 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P09 — Collect and double-annotate in batches
 
-**Model:** Luna / low for structured metadata checks; Terra / medium for tooling fixes. **Depends:** P07 and the `system-freeze-v0.1` tag from P11. **Size:** 30–60 minutes engineering per batch, plus human collection/review. **State:** blocked: the freeze tag. A row collected before the tag is development data, so collection for the test set does not start early.
+**Model:** Luna / low for structured metadata checks; Terra / medium for tooling fixes. **Depends:** P07 and the `system-freeze-v0.1` tag from P11. **Size:** 30–60 minutes engineering per batch, plus human collection/review. **State:** blocked: the freeze tag. A row collected before the tag is development data, so collection for the test set does not start early. The tooling for step 2 exists since 11 November 2026 ([record](19_LABEL_PIPELINE_2026-11-11.md)): `tools/labels.py batch`, `agreement`, `adjudication` and `merge`.
 
 **Read:** P06 policy, revised annotation guideline, `tools/collect.py`, `tools/scrub_corpus.py`, source inventory.
 
@@ -149,7 +149,7 @@ Do not stage unrelated work or publish/send anything as part of this task.
 
 ### P10 — Freeze final splits
 
-**Model:** Sol / high. **Depends:** P09. **Size:** 1–2 hours. **State:** blocked: annotated fresh rows. The builder already follows the policy (P16); what remains is the final build from adjudicated labels.
+**Model:** Sol / high. **Depends:** P09. **Size:** 1–2 hours. **State:** blocked: annotated fresh rows. The builder already follows the policy (P16) and reads label records since 11 November 2026 ([record](19_LABEL_PIPELINE_2026-11-11.md)); what remains is the final build, `python -m saqbol.eval splits --require-labels`, once the records exist.
 
 **Read:** split builder/tests, P06 policy, adjudicated metadata, `02_DATA_CONTRACTS.md`, datasheet.
 

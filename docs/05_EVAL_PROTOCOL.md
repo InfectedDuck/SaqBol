@@ -69,6 +69,8 @@ Three annotators: Toktar plus two Kazakh-speaking co-annotators. Recruit them on
 4. Adjudicate every disagreement, with a third annotator or by discussion. Log the adjudication with a one-line reason.
 5. Publish the guideline alongside the dataset.
 
+**How the answers reach the dataset.** `tools/labels.py` writes a labelling batch, reports agreement, lists every item the two annotators read differently so that a decision and its reason can be entered, and writes one label record per batch under `data/labels/`. The split builder reads the records; nothing else sets a label, a script or an annotator field on a released row. The record format and the rule that turns two readings into a label are in [02_DATA_CONTRACTS.md](02_DATA_CONTRACTS.md) section 6, and the commands are in the [label pipeline record](19_LABEL_PIPELINE_2026-11-11.md). A script that only one annotator named counts as a difference and is decided like any other.
+
 Expect low kappa on `kz.bank_security_call` versus `kz.remote_access_loan`, since one often becomes the other. Do not hide it. Explain it as a property of the domain and consider whether they should be merged in v0.2.
 
 ---

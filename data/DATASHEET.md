@@ -292,6 +292,15 @@ other's answers. The procedure, from `docs/05_EVAL_PROTOCOL.md` section 3:
    one-line logged reason. Rows adjudicated: `[[TBD: adjudicated row count,
    from T407]]`.
 
+The two answers and the label that follows are kept per row in label records
+under `data/labels/` (`docs/02_DATA_CONTRACTS.md` section 6), which the split
+builder applies. Two equal answers are the label. Any difference, including a
+script that only one annotator named, is settled by a decision logged with
+its reason. A row that has not been read twice keeps its collector's label,
+is counted as such in `manifest.json`, and no test result is published from
+a test split that contains one. On the date of this draft no row has been
+labelled and no label record exists.
+
 **Raw data.** The unsplit, scrubbed batches in `data/corpus/` are the raw form
 and are under version control. Unscrubbed text is kept nowhere; `text_hash`
 was computed before scrubbing so a re-collected duplicate is still recognised.
