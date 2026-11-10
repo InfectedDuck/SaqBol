@@ -36,6 +36,23 @@ rather than returning a sentence when the intervals touch. The README promises
 that rule; a promise enforced by a function is a promise, and one enforced by
 remembering is a hope.
 
+**An interval is as wide as either resampling unit makes it.** Several rows
+quoted from one article share their wording, their scam and often their
+verdict, so they are not independent evidence, and an interval that
+resamples rows is too narrow when they agree. Resampling whole source
+groups answers that, and is itself too narrow when the groups are few,
+which is the normal state of a small held-out split. Given `groups`,
+`bootstrap_ci` computes both intervals from the same seed and reports the
+wider bounds of the two. Whichever of the two assumptions holds for the
+data, the reported interval covers at least as often as the interval that
+assumes it. A group is drawn among the groups that hold the same set of
+gold labels, the grouped form of the class stratification above, so every
+class of the point estimate is present in every resample. With one row per
+group the two intervals are the same interval, draw for draw. Every
+reported statistic is a function of the confusion matrix
+(`CountStatistic`), which is what a resample of uneven groups can be summed
+into.
+
 The bootstrap is the percentile method, not BCa. For macro-F1 over several
 hundred rows the difference sits well inside the interval's own width, and the
 percentile method is the one a reader can reimplement from the description.
@@ -44,7 +61,7 @@ percentile method is the one a reader can reimplement from the description.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -443,11 +460,11 @@ class BatchStatistic(Protocol):
     ) -> NDArray[np.float64]: ...
 
 
-def _macro_f1_batch(
-    true_codes: NDArray[np.int16], pred_codes: NDArray[np.int16], space: LabelSpace
-) -> NDArray[np.float64]:
+def _batch_counts(
+    true_codes: NDArray[np.int16], pred_codes: NDArray[np.int16], k: int
+) -> NDArray[np.int64]:
+    """Confusion counts `[resample, true, predicted]` for a batch of resamples."""
     b, _ = true_codes.shape
-    k = len(space)
     # One bincount over every resample at once: the resample index is folded
     # into the key so each resample owns its own k*k block of bins.
     keys = (
@@ -455,44 +472,94 @@ def _macro_f1_batch(
         + pred_codes
         + (np.arange(b, dtype=np.int64) * (k * k))[:, None]
     )
-    counts = np.bincount(keys.ravel(), minlength=b * k * k).reshape(b, k, k)
-    diagonal = np.arange(k)
+    return np.bincount(keys.ravel(), minlength=b * k * k).reshape(b, k, k)
+
+
+@dataclass(frozen=True)
+class CountStatistic:
+    """A statistic of the confusion matrix.
+
+    Every number the harness reports is one, and that is what lets an interval
+    resample source groups: a resample of whole groups holds a different
+    number of rows each time and cannot be laid out as one array of row
+    indices, but it can be summed into a confusion matrix. Called on row codes
+    the statistic builds the matrix first, so a row resample and a group
+    resample go through one definition.
+    """
+
+    of_counts: Callable[[NDArray[np.int64], LabelSpace], NDArray[np.float64]]
+
+    def __call__(
+        self,
+        true_codes: NDArray[np.int16],
+        pred_codes: NDArray[np.int16],
+        space: LabelSpace,
+    ) -> NDArray[np.float64]:
+        return self.of_counts(_batch_counts(true_codes, pred_codes, len(space)), space)
+
+
+def _f1_by_class(counts: NDArray[np.int64]) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+    """F1 of every class in every resample, and whether the class is defined there."""
+    diagonal = np.arange(counts.shape[1])
     tp = counts[:, diagonal, diagonal].astype(np.float64)
     denominator = counts.sum(axis=2) + counts.sum(axis=1)
     defined = denominator > 0
-    f1 = np.where(defined, 2.0 * tp / np.maximum(denominator, 1), 0.0)
+    return np.where(defined, 2.0 * tp / np.maximum(denominator, 1), 0.0), defined
+
+
+def _mean_defined(f1: NDArray[np.float64], defined: NDArray[np.bool_]) -> NDArray[np.float64]:
     n_defined = defined.sum(axis=1)
     return np.where(n_defined > 0, f1.sum(axis=1) / np.maximum(n_defined, 1), np.nan)
 
 
-def _accuracy_batch(
-    true_codes: NDArray[np.int16], pred_codes: NDArray[np.int16], space: LabelSpace
-) -> NDArray[np.float64]:
-    return (true_codes == pred_codes).mean(axis=1)
+def _macro_f1_of_counts(counts: NDArray[np.int64], space: LabelSpace) -> NDArray[np.float64]:
+    return _mean_defined(*_f1_by_class(counts))
+
+
+def _accuracy_of_counts(counts: NDArray[np.int64], space: LabelSpace) -> NDArray[np.float64]:
+    diagonal = np.arange(counts.shape[1])
+    return counts[:, diagonal, diagonal].sum(axis=1) / counts.sum(axis=(1, 2))
 
 
 #: Macro-F1 over the label space. The default statistic, and the headline.
-MACRO_F1: BatchStatistic = _macro_f1_batch
-ACCURACY: BatchStatistic = _accuracy_batch
+MACRO_F1 = CountStatistic(_macro_f1_of_counts)
+ACCURACY = CountStatistic(_accuracy_of_counts)
 
 
-def class_f1_statistic(label: str) -> BatchStatistic:
+def macro_f1_statistic(labels: Iterable[str]) -> CountStatistic:
+    """Macro-F1 averaged over `labels` only.
+
+    For the playbook score, which averages over the playbooks with enough test
+    rows. Only the average is restricted: a row of any other class that a
+    system files under one of `labels` still lowers that class's precision. A
+    listed label that is not in the space, or that has no row on either side
+    in a resample, is undefined there and skipped, as in `macro_f1`.
+    """
+    wanted = tuple(dict.fromkeys(labels))
+
+    def of_counts(counts: NDArray[np.int64], space: LabelSpace) -> NDArray[np.float64]:
+        columns = [space.code(v) for v in wanted if v in space.labels]
+        if not columns:
+            return np.full(counts.shape[0], np.nan)
+        f1, defined = _f1_by_class(counts)
+        return _mean_defined(f1[:, columns], defined[:, columns])
+
+    return CountStatistic(of_counts)
+
+
+def class_f1_statistic(label: str) -> CountStatistic:
     """F1 for one class, for a per-playbook interval."""
 
-    def statistic(
-        true_codes: NDArray[np.int16], pred_codes: NDArray[np.int16], space: LabelSpace
-    ) -> NDArray[np.float64]:
+    def of_counts(counts: NDArray[np.int64], space: LabelSpace) -> NDArray[np.float64]:
         code = space.code(label)
-        is_true = true_codes == code
-        is_pred = pred_codes == code
-        tp = (is_true & is_pred).sum(axis=1).astype(np.float64)
-        denominator = is_true.sum(axis=1) + is_pred.sum(axis=1)
+        tp = counts[:, code, code].astype(np.float64)
+        denominator = counts[:, code, :].sum(axis=1) + counts[:, :, code].sum(axis=1)
         return np.where(denominator > 0, 2.0 * tp / np.maximum(denominator, 1), np.nan)
 
-    return statistic
+    return CountStatistic(of_counts)
 
 
-def predicted_rate_statistic(labels: Iterable[str]) -> BatchStatistic:
+def predicted_rate_statistic(labels: Iterable[str]) -> CountStatistic:
     """Share of rows predicted into `labels`.
 
     Over hard negatives this is the false-positive rate, which is how the
@@ -500,17 +567,15 @@ def predicted_rate_statistic(labels: Iterable[str]) -> BatchStatistic:
     contributes nothing rather than raising: nobody predicted it, so its rate
     is genuinely zero.
     """
-    wanted = tuple(labels)
+    wanted = tuple(dict.fromkeys(labels))
 
-    def statistic(
-        true_codes: NDArray[np.int16], pred_codes: NDArray[np.int16], space: LabelSpace
-    ) -> NDArray[np.float64]:
-        codes = np.array([space.code(v) for v in wanted if v in space.labels], dtype=np.int16)
-        if codes.size == 0:
-            return np.zeros(pred_codes.shape[0], dtype=np.float64)
-        return np.isin(pred_codes, codes).mean(axis=1)
+    def of_counts(counts: NDArray[np.int64], space: LabelSpace) -> NDArray[np.float64]:
+        codes = [space.code(v) for v in wanted if v in space.labels]
+        if not codes:
+            return np.zeros(counts.shape[0], dtype=np.float64)
+        return counts[:, :, codes].sum(axis=(1, 2)) / counts.sum(axis=(1, 2))
 
-    return statistic
+    return CountStatistic(of_counts)
 
 
 @dataclass(frozen=True)
@@ -533,6 +598,12 @@ class Estimate:
     #: "bootstrap", or "exact_binomial" where a bootstrap interval would have
     #: had no width and the bound was computed in closed form instead.
     method: str = "bootstrap"
+    #: With groups: how many there were, and the two intervals the reported
+    #: one is the envelope of, resampling rows and resampling groups. None
+    #: when only rows were resampled.
+    n_groups: int | None = None
+    ci_rows: CI | None = None
+    ci_groups: CI | None = None
 
     @property
     def ci(self) -> CI:
@@ -571,6 +642,72 @@ def _stratified_resample(strata: Sequence[str], n_resamples: int, seed: int) -> 
     return np.concatenate(draws, axis=1)
 
 
+def _group_layout(
+    groups: Sequence[Hashable], strata: Sequence[object]
+) -> tuple[NDArray[np.int64], list[NDArray[np.intp]]]:
+    """Each row's group number, and the groups of each stratum in drawing order.
+
+    A group's stratum is the set of stratum values among its rows. Groups are
+    numbered in order of first appearance and strata are visited in sorted
+    order, as `_stratified_resample` visits its strata, so that with one row
+    per group the two draw the same rows from the same seed.
+    """
+    number: dict[Hashable, int] = {}
+    row_group = np.fromiter(
+        (number.setdefault(g, len(number)) for g in groups), dtype=np.int64, count=len(groups)
+    )
+    held: list[set[str]] = [set() for _ in number]
+    for g, value in zip(row_group.tolist(), strata, strict=True):
+        held[g].add(str(value))
+    keys = np.asarray(["+".join(sorted(values)) for values in held])
+    return row_group, [np.flatnonzero(keys == key) for key in sorted(set(keys.tolist()))]
+
+
+def _grouped_weights(
+    by_stratum: Sequence[NDArray[np.intp]], n_groups: int, n_resamples: int, seed: int
+) -> NDArray[np.int64]:
+    """How often each group is drawn in each resample, `(resamples, groups)`.
+
+    Each stratum draws as many groups as it holds, with replacement. Every
+    draw is made up front, so the result depends on the seed alone.
+    """
+    rng = np.random.default_rng(seed)
+    weights = np.zeros((n_resamples, n_groups), dtype=np.int64)
+    offsets = np.arange(n_resamples, dtype=np.int64)[:, None]
+    for members in by_stratum:
+        size = members.size
+        draws = rng.integers(0, size, size=(n_resamples, size))
+        tally = np.bincount((draws + offsets * size).ravel(), minlength=n_resamples * size)
+        weights[:, members] = tally.reshape(n_resamples, size)
+    return weights
+
+
+def _grouped_values(
+    statistic: CountStatistic,
+    true_codes: NDArray[np.int16],
+    pred_codes: NDArray[np.int16],
+    space: LabelSpace,
+    *,
+    groups: Sequence[Hashable],
+    strata: Sequence[object],
+    n_resamples: int,
+    seed: int,
+) -> tuple[NDArray[np.float64], int]:
+    """The statistic over resamples of whole groups, and the number of groups."""
+    row_group, by_stratum = _group_layout(groups, strata)
+    n_groups = sum(members.size for members in by_stratum)
+    k = len(space)
+    keys = row_group * (k * k) + true_codes.astype(np.int64) * k + pred_codes
+    group_counts = np.bincount(keys, minlength=n_groups * k * k).reshape(n_groups, k * k)
+    weights = _grouped_weights(by_stratum, n_groups, n_resamples, seed)
+    values = np.empty(n_resamples, dtype=np.float64)
+    chunk = max(1, min(n_resamples, _CHUNK_CELLS // (n_groups + k * k)))
+    for start in range(0, n_resamples, chunk):
+        counts = weights[start : start + chunk] @ group_counts
+        values[start : start + chunk] = statistic.of_counts(counts.reshape(-1, k, k), space)
+    return values, n_groups
+
+
 def bootstrap_ci(
     y_true: Sequence[str],
     y_pred: Sequence[str],
@@ -581,6 +718,7 @@ def bootstrap_ci(
     alpha: float = DEFAULT_ALPHA,
     labels: Sequence[str] | None = None,
     strata: Sequence[str] | None = None,
+    groups: Sequence[Hashable] | None = None,
 ) -> Estimate:
     """Percentile bootstrap interval, stratified by true class.
 
@@ -593,6 +731,12 @@ def bootstrap_ci(
 
     Pass `strata` to stratify by something else — language, for a per-language
     interval — or a constant array to switch stratification off.
+
+    Pass `groups`, one key per row, and the interval is the envelope of two:
+    the row interval above, and one whose resamples draw whole groups, as
+    many within every stratum as the stratum holds, a group's stratum being
+    the set of stratum values among its rows. The statistic must then be a
+    `CountStatistic`. Both intervals travel with the estimate.
     """
     n = _check_arrays(y_true, y_pred)
     if n_resamples < 1:
@@ -601,30 +745,53 @@ def bootstrap_ci(
         raise ValueError("alpha must lie strictly between 0 and 1")
     if strata is not None:
         _check_arrays(y_true, strata)
+    if groups is not None:
+        _check_arrays(y_true, groups)
+        if not isinstance(statistic, CountStatistic):
+            raise TypeError(
+                "a grouped interval needs a CountStatistic: a resample of whole groups is "
+                "summed into a confusion matrix, not laid out as rows"
+            )
 
     space = _label_space(y_true, y_pred, labels=labels)
     true_codes = space.encode(y_true)
     pred_codes = space.encode(y_pred)
     point = float(statistic(true_codes[None, :], pred_codes[None, :], space)[0])
+    stratum_of_row = list(strata) if strata is not None else list(y_true)
+    percentiles = [100.0 * alpha / 2.0, 100.0 * (1.0 - alpha / 2.0)]
 
-    indices = _stratified_resample(
-        list(strata) if strata is not None else list(y_true), n_resamples, seed
-    )
+    indices = _stratified_resample(stratum_of_row, n_resamples, seed)
     values = np.empty(n_resamples, dtype=np.float64)
     chunk = max(1, min(n_resamples, _CHUNK_CELLS // n))
     for start in range(0, n_resamples, chunk):
         block = indices[start : start + chunk]
         values[start : start + chunk] = statistic(true_codes[block], pred_codes[block], space)
+    lo, hi = (float(v) for v in np.percentile(values, percentiles))
+    estimate = Estimate(
+        point=point, lo=lo, hi=hi, n=n, n_resamples=n_resamples, seed=seed, alpha=alpha
+    )
+    if groups is None:
+        return estimate
 
-    lo, hi = np.percentile(values, [100.0 * alpha / 2.0, 100.0 * (1.0 - alpha / 2.0)])
-    return Estimate(
-        point=point,
-        lo=float(lo),
-        hi=float(hi),
-        n=n,
+    assert isinstance(statistic, CountStatistic)
+    group_values, n_groups = _grouped_values(
+        statistic,
+        true_codes,
+        pred_codes,
+        space,
+        groups=groups,
+        strata=stratum_of_row,
         n_resamples=n_resamples,
         seed=seed,
-        alpha=alpha,
+    )
+    g_lo, g_hi = (float(v) for v in np.percentile(group_values, percentiles))
+    return replace(
+        estimate,
+        lo=min(lo, g_lo),
+        hi=max(hi, g_hi),
+        n_groups=n_groups,
+        ci_rows=(lo, hi),
+        ci_groups=(g_lo, g_hi),
     )
 
 
@@ -659,6 +826,7 @@ def hard_negative_fpr_ci(
     positive_labels: Iterable[str] = ("scam",),
     n_resamples: int = DEFAULT_N_RESAMPLES,
     alpha: float = DEFAULT_ALPHA,
+    groups: Sequence[Hashable] | None = None,
 ) -> Estimate:
     """Interval around the hard-negative false-positive rate.
 
@@ -670,13 +838,25 @@ def hard_negative_fpr_ci(
     When no hard negative was flagged, or every one was, the bootstrap has
     nothing to vary and the interval is the exact one-sided binomial bound
     instead; `method` on the returned estimate says which was used.
+
+    With `groups`, the interval also resamples the source groups of the hard
+    negatives (see `bootstrap_ci`), and the exact bound counts groups as its
+    trials. Forty genuine notices copied from four bank pages are four
+    observations of how the system treats such a page, not forty.
     """
     _check_arrays(y_true, y_pred, hard_negative)
+    if groups is not None:
+        _check_arrays(y_true, groups)
     # Validate the subset before resampling it, so a hard negative labelled
     # scam fails here rather than skewing 10,000 resamples.
     hard_negative_fpr(y_true, y_pred, hard_negative, positive_labels=positive_labels)
     subset_true = [t for t, flag in zip(y_true, hard_negative, strict=True) if flag]
     subset_pred = [p for p, flag in zip(y_pred, hard_negative, strict=True) if flag]
+    subset_groups = (
+        None
+        if groups is None
+        else [g for g, flag in zip(groups, hard_negative, strict=True) if flag]
+    )
     if not subset_true:
         raise ValueError("no rows are flagged hard_negative")
     positive = set(positive_labels)
@@ -688,11 +868,13 @@ def hard_negative_fpr_ci(
         n_resamples=n_resamples,
         alpha=alpha,
         strata=["hard_negative"] * len(subset_true),
+        groups=subset_groups,
     )
     flagged = sum(1 for p in subset_pred if p in positive)
     if flagged not in (0, len(subset_pred)):
         return estimate
-    lo, hi = exact_binomial_bound(flagged, len(subset_pred), alpha=alpha)
+    trials = len(subset_pred) if estimate.n_groups is None else estimate.n_groups
+    lo, hi = exact_binomial_bound(0 if flagged == 0 else trials, trials, alpha=alpha)
     return replace(estimate, lo=lo, hi=hi, method="exact_binomial")
 
 

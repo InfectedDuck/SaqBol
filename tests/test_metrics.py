@@ -17,11 +17,14 @@ import math
 import random
 import time
 
+import numpy as np
 import pytest
 
 from saqbol.eval.metrics import (
     ACCURACY,
     DEFAULT_N_RESAMPLES,
+    MACRO_F1,
+    CountStatistic,
     Estimate,
     OverlappingIntervals,
     abstain_rate,
@@ -39,6 +42,7 @@ from saqbol.eval.metrics import (
     hard_negative_fpr_ci,
     kappa_per_class,
     macro_f1,
+    macro_f1_statistic,
     overlaps,
     per_class_f1,
     predicted_rate_statistic,
@@ -521,6 +525,156 @@ def test_ten_thousand_resamples_over_five_hundred_rows_finish_in_under_two_secon
     elapsed = time.perf_counter() - start
     assert result.n_resamples == 10_000
     assert elapsed < 2.0, f"bootstrap took {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# Intervals over source groups
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "statistic",
+    [MACRO_F1, ACCURACY, class_f1_statistic("scam"), predicted_rate_statistic(["scam"])],
+)
+def test_one_row_per_group_is_the_row_bootstrap_draw_for_draw(statistic):
+    y_true, y_pred = synthetic_run(n=200)
+    rows = bootstrap_ci(y_true, y_pred, statistic=statistic, seed=7, n_resamples=2000)
+    groups = bootstrap_ci(
+        y_true,
+        y_pred,
+        statistic=statistic,
+        seed=7,
+        n_resamples=2000,
+        groups=[f"g{i}" for i in range(200)],
+    )
+    # Exact equality: the grouped path makes the same draws from the same
+    # seed, so a split whose rows are all independent keeps its intervals.
+    assert (groups.point, groups.lo, groups.hi) == (rows.point, rows.lo, rows.hi)
+    assert groups.ci_rows == groups.ci_groups == rows.ci
+    assert (rows.n_groups, groups.n_groups) == (None, 200)
+
+
+def _copies(n_groups: int, size: int) -> tuple[list[str], list[str], list[str]]:
+    """Groups of identical rows: every row of a group has the same answer."""
+    rng = random.Random(4)
+    y_true, y_pred, groups = [], [], []
+    for g in range(n_groups):
+        label = "scam" if g % 2 else "legit"
+        answer = label if rng.random() < 0.75 else ("legit" if label == "scam" else "scam")
+        y_true += [label] * size
+        y_pred += [answer] * size
+        groups += [f"article-{g}"] * size
+    return y_true, y_pred, groups
+
+
+def test_rows_copied_within_an_article_widen_the_interval_as_one_piece_of_evidence():
+    y_true, y_pred, groups = _copies(n_groups=24, size=5)
+    rows = bootstrap_ci(y_true, y_pred, seed=3, n_resamples=4000)
+    grouped = bootstrap_ci(y_true, y_pred, seed=3, n_resamples=4000, groups=groups)
+    assert grouped.point == rows.point
+    assert grouped.n_groups == 24
+    # Five copies of each answer are one answer: resampling rows treats them
+    # as five and gives an interval about sqrt(5) times too narrow.
+    assert grouped.width > 1.8 * rows.width
+    assert grouped.ci_rows == rows.ci
+    assert grouped.ci == grouped.ci_groups
+
+
+def test_few_mixed_groups_cannot_narrow_the_interval_below_the_row_one():
+    # Every article holds one right and one wrong answer, so the articles
+    # look alike and resampling eight of them understates the spread.
+    y_true = ["scam", "scam"] * 8 + ["legit", "legit"] * 8
+    y_pred = ["scam", "legit"] * 8 + ["legit", "scam"] * 8
+    groups = [f"article-{i // 2}" for i in range(32)]
+    result = bootstrap_ci(y_true, y_pred, seed=2, n_resamples=4000, groups=groups)
+    rows = bootstrap_ci(y_true, y_pred, seed=2, n_resamples=4000)
+    assert result.ci_groups is not None
+    assert result.ci_groups[1] - result.ci_groups[0] < rows.width
+    assert result.ci == rows.ci
+
+
+def test_every_class_of_the_point_estimate_is_in_every_grouped_resample():
+    # Two groups hold the only ambiguous rows, and one group mixes classes.
+    y_true = ["ambiguous", "ambiguous", "ambiguous"] + ["scam"] * 20 + ["legit"] * 20
+    y_pred = ["scam"] * 3 + ["scam"] * 15 + ["legit"] * 5 + ["legit"] * 18 + ["scam"] * 2
+    groups = ["a", "a", "b"] + [f"s{i // 2}" for i in range(20)] + [f"l{i // 4}" for i in range(20)]
+    groups[3] = "b"  # article b quotes an ambiguous row and a scam
+
+    def classes_present(counts, space):
+        return (counts.sum(axis=2) > 0).sum(axis=1).astype(float)
+
+    result = bootstrap_ci(
+        y_true,
+        y_pred,
+        statistic=CountStatistic(classes_present),
+        seed=1,
+        n_resamples=2000,
+        groups=groups,
+    )
+    assert result.ci == (3.0, 3.0)
+
+
+def test_the_same_seed_gives_the_same_grouped_interval():
+    y_true, y_pred, groups = _copies(n_groups=30, size=3)
+    first = bootstrap_ci(y_true, y_pred, seed=11, n_resamples=1000, groups=groups)
+    second = bootstrap_ci(y_true, y_pred, seed=11, n_resamples=1000, groups=groups)
+    assert first == second
+
+
+def test_a_grouped_interval_needs_a_statistic_of_the_confusion_matrix():
+    y_true, y_pred, groups = _copies(n_groups=10, size=2)
+
+    def count_rows(true_codes, pred_codes, space):
+        return true_codes.shape[1] * np.ones(true_codes.shape[0])
+
+    with pytest.raises(TypeError, match="CountStatistic"):
+        bootstrap_ci(y_true, y_pred, statistic=count_rows, seed=1, n_resamples=10, groups=groups)
+
+
+def test_the_exact_bound_counts_source_groups_as_trials():
+    y_true = ["legit"] * 40
+    y_pred = ["legit"] * 40
+    hard = [True] * 40
+    by_row = hard_negative_fpr_ci(y_true, y_pred, hard, seed=1, n_resamples=200)
+    by_group = hard_negative_fpr_ci(
+        y_true, y_pred, hard, seed=1, n_resamples=200, groups=[f"page-{i // 5}" for i in range(40)]
+    )
+    # Forty clean notices from eight pages are eight observations.
+    assert by_row.hi == pytest.approx(1 - 0.05 ** (1 / 40))
+    assert by_group.hi == pytest.approx(1 - 0.05 ** (1 / 8))
+    assert (by_group.method, by_group.n_groups, by_group.n) == ("exact_binomial", 8, 40)
+
+
+def test_hard_negative_groups_are_counted_among_the_hard_negatives_only():
+    y_true = ["legit"] * 6 + ["scam"] * 4
+    y_pred = ["scam", "legit", "scam", "legit", "legit", "legit"] + ["scam"] * 4
+    hard = [True] * 6 + [False] * 4
+    groups = ["a", "a", "b", "b", "c", "c", "a", "z", "z", "z"]
+    result = hard_negative_fpr_ci(y_true, y_pred, hard, seed=1, n_resamples=500, groups=groups)
+    assert result.point == pytest.approx(2 / 6)
+    assert (result.n, result.n_groups, result.method) == (6, 3, "bootstrap")
+
+
+def test_macro_f1_over_listed_labels_averages_those_and_still_counts_every_error():
+    # A is the only listed class. Row 3 (gold: none) filed under A lowers A's
+    # precision; row 2 (gold B) filed under A does too, and B is not averaged.
+    #   A: tp 1, gold 2, predicted 3 -> 2*1/(2+3) = 0.4
+    y_true = ["A", "A", "B", "none", "none"]
+    y_pred = ["A", "none", "A", "A", "none"]
+    only_a = bootstrap_ci(
+        y_true, y_pred, statistic=macro_f1_statistic(["A"]), seed=1, n_resamples=200
+    )
+    assert only_a.point == pytest.approx(0.4)
+    #   B: tp 0, gold 1, predicted 0 -> 0.0; the mean of A and B is 0.2
+    both = bootstrap_ci(
+        y_true, y_pred, statistic=macro_f1_statistic(["A", "B"]), seed=1, n_resamples=200
+    )
+    assert both.point == pytest.approx(0.2)
+    # A listed label nobody used is undefined and skipped, not scored zero.
+    absent = bootstrap_ci(
+        y_true, y_pred, statistic=macro_f1_statistic(["A", "Z"]), seed=1, n_resamples=200
+    )
+    assert absent.point == pytest.approx(0.4)
 
 
 def test_bootstrap_rejects_an_impossible_alpha():
